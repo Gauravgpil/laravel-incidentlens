@@ -138,4 +138,20 @@ fn preflight_incident_code_and_csv_export_work() {
         .args(["--format=json"])
         .assert()
         .success();
+
+    Command::cargo_bin("incidentlens")
+        .unwrap()
+        .args(["scalability", "--project"])
+        .arg(fixture.path())
+        .args(["--format=json"])
+        .assert()
+        .success();
+
+    Command::cargo_bin("incidentlens")
+        .unwrap()
+        .args(["frontend", "--project"])
+        .arg(fixture.path())
+        .args(["--format=json"])
+        .assert()
+        .success();
 }

@@ -66,6 +66,8 @@ pub const MODULES: &[(&str, &str)] = &[
     ("security", "Security Intelligence"),
     ("scheduler", "Scheduler Intelligence"),
     ("resources", "Memory & Disk"),
+    ("scalability", "Scalability & Infra"),
+    ("frontend", "Frontend & Assets"),
     ("tests", "Testing Intelligence"),
     ("deployment", "Deployment & Git"),
     ("migration", "Migration Intelligence"),

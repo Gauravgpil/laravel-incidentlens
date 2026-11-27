@@ -45,6 +45,7 @@ final class IncidentLensPackageTest extends TestCase
     public function test_artisan_commands_are_registered(): void
     {
         $commands = array_keys($this->app->make('Illuminate\Contracts\Console\Kernel')->all());
+        $this->assertContains('incidentlens:audit', $commands);
         $this->assertContains('incidentlens:doctor', $commands);
         $this->assertContains('incidentlens:status', $commands);
         $this->assertContains('incidentlens:scan', $commands);

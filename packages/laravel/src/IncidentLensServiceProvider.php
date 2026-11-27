@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Gaurav\IncidentLens;
 
 use Gaurav\IncidentLens\Collectors\RuntimeCollector;
+use Gaurav\IncidentLens\Commands\AuditCommand;
 use Gaurav\IncidentLens\Commands\DoctorCommand;
 use Gaurav\IncidentLens\Commands\ScanCommand;
 use Gaurav\IncidentLens\Commands\StatusCommand;
@@ -58,6 +59,7 @@ final class IncidentLensServiceProvider extends ServiceProvider
             ], 'incidentlens-config');
 
             $this->commands([
+                AuditCommand::class,
                 DoctorCommand::class,
                 StatusCommand::class,
                 ScanCommand::class,

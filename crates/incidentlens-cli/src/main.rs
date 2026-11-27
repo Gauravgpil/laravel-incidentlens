@@ -3,9 +3,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 use crossterm::tty::IsTty;
 use incidentlens_analyzer::{
     AnalyzerError, ApiAnalyzer, ArchitectureAnalyzer, CacheAnalyzer, CheckStatus, CodeAnalyzer,
-    DatabaseAnalyzer, DependencyAnalyzer, FrameworkAnalyzer, GitCorrelator, LogAnalyzer,
-    MigrationAnalyzer, PerformanceAnalyzer, PreflightScanner, ProjectAnalyzer, QueueAnalyzer,
-    ResourceAnalyzer, SchedulerAnalyzer, SecurityAnalyzer, TestingAnalyzer,
+    DatabaseAnalyzer, DependencyAnalyzer, FrameworkAnalyzer, FrontendAnalyzer, GitCorrelator,
+    LogAnalyzer, MigrationAnalyzer, PerformanceAnalyzer, PreflightScanner, ProjectAnalyzer,
+    QueueAnalyzer, ResourceAnalyzer, ScalabilityAnalyzer, SchedulerAnalyzer, SecurityAnalyzer,
+    TestingAnalyzer,
 };
 use incidentlens_core::{
     is_protocol_compatible, CoreError, ExitCode, ProjectMetadata, ProtocolInfo, RequestEnvelope,
@@ -139,6 +140,10 @@ enum Commands {
     },
     /// Inspect storage/logs disk usage and unrotated oversized log files
     Resources,
+    /// Audit horizontal scaling readiness (session, cache, queue, storage)
+    Scalability,
+    /// Audit React/Inertia/Vite assets (source maps, bundle size, duplicate deps)
+    Frontend,
     /// Pre-deployment readiness scanner ([PASS]/[WARN]/[FAIL])
     Preflight {
         /// Exit with code 1 if preflight is BLOCKED
@@ -259,6 +264,8 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ExitCode, Box<dyn std::error::
         Some(Commands::Framework) => run_filtered_scan(cli, format, Some("framework"), 500.0, 1000.0),
         Some(Commands::Tests { junit }) => run_module_tests(cli, format, junit.as_deref()),
         Some(Commands::Resources) => run_filtered_scan(cli, format, Some("resources"), 500.0, 1000.0),
+        Some(Commands::Scalability) => run_filtered_scan(cli, format, Some("scalability"), 500.0, 1000.0),
+        Some(Commands::Frontend) => run_filtered_scan(cli, format, Some("frontend"), 500.0, 1000.0),
         Some(Commands::Preflight { ci }) => run_preflight(cli, format, *ci),
         Some(Commands::Incident) => run_incident(cli, format),
         Some(Commands::Snapshot { name }) => run_snapshot(cli, format, name),
@@ -295,7 +302,8 @@ fn build_full_response(
 
     let mut db_analysis = DatabaseAnalyzer::analyze(&runtime_events, &log_res.groups, slow_query_ms);
     db_analysis.findings.extend(DatabaseAnalyzer::analyze_static(project_path));
-    let queue_analysis = QueueAnalyzer::analyze(&runtime_events, &log_res.groups);
+    let mut queue_analysis = QueueAnalyzer::analyze(&runtime_events, &log_res.groups);
+    queue_analysis.findings.extend(QueueAnalyzer::analyze_static(project_path));
     let perf_analysis = PerformanceAnalyzer::analyze(&runtime_events, slow_endpoint_ms);
     let sec_findings = SecurityAnalyzer::analyze(project_path, &project_analysis.report);
     let mig_findings = MigrationAnalyzer::analyze(project_path);
@@ -307,6 +315,8 @@ fn build_full_response(
     let arch_findings = ArchitectureAnalyzer::analyze(project_path);
     let fw_findings = FrameworkAnalyzer::analyze(project_path);
     let res_findings = ResourceAnalyzer::analyze_with_runtime(project_path, &runtime_events);
+    let scale_findings = ScalabilityAnalyzer::analyze(&project_analysis.report);
+    let fe_findings = FrontendAnalyzer::analyze(project_path);
     let test_findings = TestingAnalyzer::analyze(project_path, None);
 
     let mut findings = Vec::new();
@@ -323,6 +333,8 @@ fn build_full_response(
     findings.extend(sec_findings);
     findings.extend(sched_findings);
     findings.extend(res_findings);
+    findings.extend(scale_findings);
+    findings.extend(fe_findings);
     findings.extend(test_findings);
     findings.extend(mig_findings);
     findings.extend(dep_findings);

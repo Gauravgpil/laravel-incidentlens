@@ -1,7 +1,10 @@
+use crate::code::collect_php_files;
 use incidentlens_core::{Confidence, Evidence, EvidenceKind, Finding, Severity};
 use incidentlens_parser::{LogGroup, RuntimeEvent};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobFailureStat {
@@ -108,5 +111,62 @@ impl QueueAnalyzer {
             failure_groups,
             findings,
         }
+    }
+
+    /// Static analysis of `app/Jobs/*.php` for missing `$tries`, `$timeout`, and `failed()` handlers.
+    pub fn analyze_static(project_root: &Path) -> Vec<Finding> {
+        let mut findings = Vec::new();
+        for file in collect_php_files(&project_root.join("app/Jobs")) {
+            let Ok(content) = fs::read_to_string(&file) else {
+                continue;
+            };
+            if !content.contains("ShouldQueue") {
+                continue;
+            }
+            let rel = file
+                .strip_prefix(project_root)
+                .unwrap_or(&file)
+                .display()
+                .to_string();
+
+            if !content.contains("$tries") && !content.contains("tries(") {
+                findings.push(Finding {
+                    id: format!("QUE-CFG-{}", findings.len() + 1),
+                    module: "queue".to_string(),
+                    title: format!("Queued job missing explicit $tries retry policy in {rel}"),
+                    severity: Severity::Low,
+                    confidence: Confidence::High,
+                    affected_component: rel.clone(),
+                    evidence: vec![Evidence {
+                        kind: EvidenceKind::Observed,
+                        source: "queue_static".to_string(),
+                        detail: "Job implements ShouldQueue without `$tries` or `tries()`.".to_string(),
+                    }],
+                    first_observed: None,
+                    last_observed: None,
+                    next_step: "Define `public int $tries = 3;` (and `$backoff`) to control retry behavior.".to_string(),
+                });
+            }
+
+            if !content.contains("$timeout") {
+                findings.push(Finding {
+                    id: format!("QUE-TMO-{}", findings.len() + 1),
+                    module: "queue".to_string(),
+                    title: format!("Queued job missing explicit $timeout in {rel}"),
+                    severity: Severity::Low,
+                    confidence: Confidence::High,
+                    affected_component: rel,
+                    evidence: vec![Evidence {
+                        kind: EvidenceKind::Observed,
+                        source: "queue_static".to_string(),
+                        detail: "Job implements ShouldQueue without `public int $timeout`.".to_string(),
+                    }],
+                    first_observed: None,
+                    last_observed: None,
+                    next_step: "Set `public int $timeout` to prevent stuck workers from blocking the queue.".to_string(),
+                });
+            }
+        }
+        findings
     }
 }
