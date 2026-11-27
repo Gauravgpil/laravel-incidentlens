@@ -75,12 +75,29 @@ pub struct RequestOptions {
     pub modules: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct TelemetrySummary {
+    pub health_score: u8,
+    pub log_throughput_mb_s: Option<f64>,
+    pub log_timeline: Vec<u64>,
+    pub p50_ms: Option<f64>,
+    pub p95_ms: Option<f64>,
+    pub p99_ms: Option<f64>,
+    pub cache_hit_rate: Option<f64>,
+    pub total_queries: usize,
+    pub slow_queries: usize,
+    pub n_plus_one_candidates: usize,
+    pub failed_jobs: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseEnvelope {
     pub protocol_version: String,
     pub engine_version: String,
     pub status: String,
     pub summary: SummaryCounts,
+    #[serde(default)]
+    pub telemetry: TelemetrySummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<ProjectReport>,
     pub findings: Vec<Finding>,
@@ -91,10 +108,25 @@ pub struct ResponseEnvelope {
 impl ResponseEnvelope {
     pub fn ok(project: Option<ProjectReport>, findings: Vec<Finding>) -> Self {
         let mut summary = SummaryCounts::default();
+        let mut penalty: u32 = 0;
         for f in &findings {
             match f.severity {
-                Severity::Critical | Severity::High => summary.errors += 1,
-                Severity::Medium | Severity::Low => summary.warnings += 1,
+                Severity::Critical => {
+                    summary.errors += 1;
+                    penalty += 25;
+                }
+                Severity::High => {
+                    summary.errors += 1;
+                    penalty += 15;
+                }
+                Severity::Medium => {
+                    summary.warnings += 1;
+                    penalty += 7;
+                }
+                Severity::Low => {
+                    summary.warnings += 1;
+                    penalty += 3;
+                }
                 Severity::Info => {}
             }
             if f.module == "performance" {
@@ -104,11 +136,17 @@ impl ResponseEnvelope {
             }
         }
 
+        let health_score = 100u8.saturating_sub(penalty.min(100) as u8);
+
         Self {
             protocol_version: PROTOCOL_VERSION.to_string(),
             engine_version: ENGINE_VERSION.to_string(),
             status: "ok".to_string(),
             summary,
+            telemetry: TelemetrySummary {
+                health_score,
+                ..Default::default()
+            },
             project,
             findings,
             incidents: Vec::new(),

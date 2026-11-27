@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace Gaurav\IncidentLens\Collectors;
 
+use Illuminate\Cache\Events\CacheHit;
+use Illuminate\Cache\Events\CacheMissed;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Foundation\Http\Events\RequestHandled;
+use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
@@ -109,6 +112,55 @@ final class RuntimeCollector
                     'status' => $event->response->getStatusCode(),
                     'duration_ms' => $durationMs,
                     'memory_peak_bytes' => memory_get_peak_usage(true),
+                    'request_id' => $this->currentRequestId,
+                ]);
+            });
+        }
+
+        if (class_exists(CacheHit::class)) {
+            $events->listen(CacheHit::class, function (CacheHit $event): void {
+                if (! $this->shouldSample()) {
+                    return;
+                }
+                $this->appendEvent([
+                    'type' => 'cache',
+                    'timestamp' => gmdate('c'),
+                    'hit' => true,
+                    'store' => $event->storeName ?? null,
+                ]);
+            });
+        }
+
+        if (class_exists(CacheMissed::class)) {
+            $events->listen(CacheMissed::class, function (CacheMissed $event): void {
+                if (! $this->shouldSample()) {
+                    return;
+                }
+                $this->appendEvent([
+                    'type' => 'cache',
+                    'timestamp' => gmdate('c'),
+                    'hit' => false,
+                    'store' => $event->storeName ?? null,
+                ]);
+            });
+        }
+
+        if (class_exists(ResponseReceived::class)) {
+            $events->listen(ResponseReceived::class, function (ResponseReceived $event): void {
+                if (! $this->shouldSample()) {
+                    return;
+                }
+                $host = (string) (parse_url($event->request->url(), PHP_URL_HOST) ?? 'external');
+                $stats = $event->response->handlerStats();
+                $durationMs = isset($stats['total_time']) ? round((float) $stats['total_time'] * 1000, 3) : 0.0;
+
+                $this->appendEvent([
+                    'type' => 'http_client',
+                    'timestamp' => gmdate('c'),
+                    'method' => $event->request->method(),
+                    'host' => $host,
+                    'status' => $event->response->status(),
+                    'duration_ms' => $durationMs,
                     'request_id' => $this->currentRequestId,
                 ]);
             });

@@ -9,5 +9,5 @@ pub use exit_codes::ExitCode;
 pub use protocol::{
     is_protocol_compatible, Confidence, Evidence, EvidenceKind, Finding, Incident, ProjectDrivers,
     ProjectMetadata, ProjectReport, ProtocolInfo, RequestEnvelope, RequestOptions,
-    ResponseEnvelope, Severity, SummaryCounts, ENGINE_VERSION, PROTOCOL_VERSION,
+    ResponseEnvelope, Severity, SummaryCounts, TelemetrySummary, ENGINE_VERSION, PROTOCOL_VERSION,
 };

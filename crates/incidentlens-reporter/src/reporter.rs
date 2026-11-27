@@ -73,20 +73,51 @@ pub fn render_terminal_report(resp: &ResponseEnvelope, use_color: bool) -> Strin
         }
     }
 
+    let score = resp.telemetry.health_score;
+    let filled = (score as usize) / 10;
+    let empty = 10usize.saturating_sub(filled);
+    let bar = format!("{}{}", "█".repeat(filled), "░".repeat(empty));
+
     if use_color {
+        let score_colored = if score >= 85 {
+            format!("[{bar}] {score}/100").bright_green().bold().to_string()
+        } else if score >= 60 {
+            format!("[{bar}] {score}/100").bright_yellow().bold().to_string()
+        } else {
+            format!("[{bar}] {score}/100").bright_red().bold().to_string()
+        };
         let _ = writeln!(
             out,
-            "  {}  {} {}   {} {}   {} {}   {} {}",
+            "  {}  {}   {} {}   {} {}   {} {}",
             "HEALTH:".bold().bright_blue(),
+            score_colored,
             "Errors:".dimmed(),
             resp.summary.errors.to_string().bright_red().bold(),
             "Warnings:".dimmed(),
             resp.summary.warnings.to_string().bright_yellow().bold(),
-            "Perf:".dimmed(),
-            resp.summary.performance.to_string().bright_magenta().bold(),
             "Security:".dimmed(),
             resp.summary.security.to_string().bright_cyan().bold()
         );
+        if resp.telemetry.p95_ms.is_some()
+            || resp.telemetry.cache_hit_rate.is_some()
+            || resp.telemetry.total_queries > 0
+        {
+            let _ = writeln!(
+                out,
+                "  {}  P95: {}  |  Queries: {} (N+1: {})  |  Cache Hit: {}",
+                "TELEMETRY:".bold().bright_magenta(),
+                resp.telemetry
+                    .p95_ms
+                    .map(|v| format!("{v:.1}ms"))
+                    .unwrap_or_else(|| "n/a".into()),
+                resp.telemetry.total_queries,
+                resp.telemetry.n_plus_one_candidates,
+                resp.telemetry
+                    .cache_hit_rate
+                    .map(|v| format!("{v:.1}%"))
+                    .unwrap_or_else(|| "n/a".into()),
+            );
+        }
         let _ = writeln!(
             out,
             "{}",
@@ -96,7 +127,7 @@ pub fn render_terminal_report(resp: &ResponseEnvelope, use_color: bool) -> Strin
     } else {
         let _ = writeln!(
             out,
-            "  HEALTH: Errors={} Warnings={} Perf={} Security={}",
+            "  HEALTH: [{bar}] {score}/100 | Errors={} Warnings={} Perf={} Security={}",
             resp.summary.errors,
             resp.summary.warnings,
             resp.summary.performance,

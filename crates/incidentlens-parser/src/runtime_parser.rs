@@ -31,6 +31,19 @@ pub enum RuntimeEvent {
         exception: Option<String>,
         attempt: Option<u32>,
     },
+    Cache {
+        timestamp: String,
+        hit: bool,
+        store: Option<String>,
+    },
+    HttpClient {
+        timestamp: String,
+        method: String,
+        host: String,
+        status: u16,
+        duration_ms: f64,
+        request_id: Option<String>,
+    },
 }
 
 /// Streams a bounded runtime `.jsonl` file, skipping malformed lines gracefully.

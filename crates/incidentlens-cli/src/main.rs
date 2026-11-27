@@ -92,6 +92,9 @@ enum Commands {
         fingerprint: Option<String>,
         #[arg(long)]
         limit: Option<usize>,
+        /// Stream newly appended log lines in real time
+        #[arg(long)]
+        follow: bool,
     },
     /// Analyze database query fingerprints, slow queries, and N+1 candidates
     Database {
@@ -193,7 +196,22 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ExitCode, Box<dyn std::error::
             search,
             fingerprint,
             limit,
-        }) => run_module_logs(cli, format, since.as_deref(), level.as_deref(), search.clone(), fingerprint.clone(), *limit),
+            follow,
+        }) => {
+            if *follow {
+                run_logs_follow(cli)
+            } else {
+                run_module_logs(
+                    cli,
+                    format,
+                    since.as_deref(),
+                    level.as_deref(),
+                    search.clone(),
+                    fingerprint.clone(),
+                    *limit,
+                )
+            }
+        }
         Some(Commands::Database { slow_ms }) => run_filtered_scan(cli, format, Some("database"), *slow_ms, 1000.0),
         Some(Commands::Queue) => run_filtered_scan(cli, format, Some("queue"), 500.0, 1000.0),
         Some(Commands::Performance { slow_ms }) => run_filtered_scan(cli, format, Some("performance"), 500.0, *slow_ms),
@@ -256,6 +274,15 @@ fn build_full_response(
 
     let mut resp = ResponseEnvelope::ok(Some(project_analysis.report), findings);
     resp.incidents = incidents;
+    resp.telemetry.p50_ms = perf_analysis.summary.p50_ms;
+    resp.telemetry.p95_ms = perf_analysis.summary.p95_ms;
+    resp.telemetry.p99_ms = perf_analysis.summary.p99_ms;
+    resp.telemetry.cache_hit_rate = perf_analysis.summary.cache_hit_rate;
+    resp.telemetry.total_queries = db_analysis.total_queries;
+    resp.telemetry.slow_queries = db_analysis.slow_queries_count;
+    resp.telemetry.n_plus_one_candidates = db_analysis.n_plus_one_candidates;
+    resp.telemetry.failed_jobs = queue_analysis.failed_jobs;
+    resp.telemetry.log_timeline = log_res.groups.iter().take(12).map(|g| g.count as u64).collect();
     Ok(resp)
 }
 
@@ -529,4 +556,38 @@ fn parse_since(s: &str) -> Option<chrono::DateTime<Utc>> {
         return Some(Utc::now() - ChronoDuration::days(days));
     }
     None
+}
+
+fn run_logs_follow(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    use incidentlens_core::redaction::redact_inline_secrets;
+    use std::io::{BufRead, BufReader, Seek, SeekFrom};
+
+    let project_path = resolve_project_path(cli)?;
+    let log_path = project_path.join("storage/logs/laravel.log");
+    if !log_path.is_file() {
+        eprintln!("error: log file not found at {}", log_path.display());
+        return Ok(ExitCode::InvalidInput);
+    }
+
+    println!("Following {} (Ctrl+C to stop)...", log_path.display());
+    let mut file = fs::File::open(&log_path)?;
+    let mut pos = file.seek(SeekFrom::End(0))?;
+
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let len = fs::metadata(&log_path)?.len();
+        if len < pos {
+            pos = 0; // Log rotated
+        }
+        if len > pos {
+            file.seek(SeekFrom::Start(pos))?;
+            let mut reader = BufReader::new(&file);
+            let mut line = String::new();
+            while reader.read_line(&mut line)? > 0 {
+                print!("{}", redact_inline_secrets(&line));
+                line.clear();
+            }
+            pos = len;
+        }
+    }
 }

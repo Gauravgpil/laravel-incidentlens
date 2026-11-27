@@ -3,13 +3,14 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use incidentlens_core::{Finding, Incident, ResponseEnvelope, Severity};
+use incidentlens_core::{EvidenceKind, Finding, Incident, ResponseEnvelope, Severity};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
+    Block, BorderType, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar,
+    ScrollbarOrientation, ScrollbarState, Sparkline, Wrap,
 };
 use ratatui::{Frame, Terminal};
 use std::io;
@@ -136,6 +137,13 @@ impl TuiState {
         self.selected_finding = 0;
     }
 
+    pub fn jump_module(&mut self, idx: usize) {
+        if idx < MODULES.len() {
+            self.module_idx = idx;
+            self.selected_finding = 0;
+        }
+    }
+
     pub fn count_for_module(&self, module_key: &str) -> usize {
         if module_key == "all" {
             self.data.findings.len()
@@ -195,9 +203,7 @@ where
 
                 if state.search_mode {
                     match key.code {
-                        KeyCode::Esc | KeyCode::Enter => {
-                            state.search_mode = false;
-                        }
+                        KeyCode::Esc | KeyCode::Enter => state.search_mode = false,
                         KeyCode::Backspace => {
                             state.search_query.pop();
                             state.selected_finding = 0;
@@ -233,6 +239,10 @@ where
                     KeyCode::Up | KeyCode::Char('k') => state.move_up(),
                     KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => state.next_module(),
                     KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => state.prev_module(),
+                    KeyCode::Char(c @ '0'..='9') => {
+                        let idx = (c as usize) - ('0' as usize);
+                        state.jump_module(idx);
+                    }
                     KeyCode::Char('/') => state.search_mode = true,
                     KeyCode::Char('f') => {
                         state.severity_filter = state.severity_filter.next();
@@ -257,22 +267,33 @@ fn draw_ui(f: &mut Frame<'_>, state: &TuiState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // Header
-            Constraint::Length(4), // KPI Health Strip
+            Constraint::Length(4), // Telemetry Strip: Health Gauge + KPIs + Sparkline
             Constraint::Min(10),   // Main Body
             Constraint::Length(2), // Footer
         ])
         .split(f.area());
 
     draw_header(f, chunks[0], state);
-    draw_kpi_strip(f, chunks[1], state);
+    draw_telemetry_strip(f, chunks[1], state);
 
     let body = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(30), Constraint::Min(40)])
+        .constraints([Constraint::Length(28), Constraint::Min(45)])
         .split(chunks[2]);
 
     draw_sidebar(f, body[0], state);
-    draw_findings_panel(f, body[1], state);
+
+    if body[1].width >= 82 {
+        let split = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .split(body[1]);
+        draw_findings_panel(f, split[0], state);
+        draw_inline_inspector(f, split[1], state);
+    } else {
+        draw_findings_panel(f, body[1], state);
+    }
+
     draw_footer(f, chunks[3], state);
 
     if state.show_detail {
@@ -305,7 +326,7 @@ fn draw_header(f: &mut Frame<'_>, area: Rect, state: &TuiState) {
         Color::LightGreen
     };
 
-    let line = Line::from(vec![
+    let mut spans = vec![
         Span::styled(
             "  INCIDENTLENS ",
             Style::default()
@@ -329,39 +350,91 @@ fn draw_header(f: &mut Frame<'_>, area: Rect, state: &TuiState) {
             format!("  |  v{}", state.data.engine_version),
             Style::default().fg(Color::Cyan),
         ),
-    ]);
+    ];
+
+    if let Some(p95) = state.data.telemetry.p95_ms {
+        spans.push(Span::styled(
+            format!("  |  P95: {p95:.0}ms"),
+            Style::default().fg(Color::LightMagenta),
+        ));
+    }
+    if let Some(hit) = state.data.telemetry.cache_hit_rate {
+        spans.push(Span::styled(
+            format!("  |  Cache Hit: {hit:.0}%"),
+            Style::default().fg(Color::LightGreen),
+        ));
+    }
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(Color::Cyan));
-    f.render_widget(Paragraph::new(line).block(block), area);
+    f.render_widget(Paragraph::new(Line::from(spans)).block(block), area);
 }
 
-fn draw_kpi_strip(f: &mut Frame<'_>, area: Rect, state: &TuiState) {
+fn draw_telemetry_strip(f: &mut Frame<'_>, area: Rect, state: &TuiState) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
+            Constraint::Percentage(22), // Health Gauge
+            Constraint::Percentage(13), // Errors
+            Constraint::Percentage(13), // Warnings
+            Constraint::Percentage(13), // Perf
+            Constraint::Percentage(13), // Security
+            Constraint::Percentage(26), // Sparkline
         ])
         .split(area);
 
+    let score = state.data.telemetry.health_score;
+    let gauge_color = if score >= 85 {
+        Color::LightGreen
+    } else if score >= 60 {
+        Color::Yellow
+    } else {
+        Color::LightRed
+    };
+    let gauge = Gauge::default()
+        .block(
+            Block::default()
+                .title(" HEALTH SCORE ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(gauge_color)),
+        )
+        .gauge_style(Style::default().fg(gauge_color).bg(Color::DarkGray))
+        .percent(score as u16)
+        .label(format!("{score}/100"));
+    f.render_widget(gauge, cols[0]);
+
     let s = &state.data.summary;
-    render_kpi_card(f, cols[0], "ERRORS", s.errors, Color::LightRed);
-    render_kpi_card(f, cols[1], "WARNINGS", s.warnings, Color::Yellow);
-    render_kpi_card(f, cols[2], "PERFORMANCE", s.performance, Color::Magenta);
-    render_kpi_card(f, cols[3], "SECURITY", s.security, Color::LightCyan);
-    render_kpi_card(
-        f,
-        cols[4],
-        "INCIDENTS",
-        state.data.incidents.len(),
-        Color::LightYellow,
-    );
+    render_kpi_card(f, cols[1], "ERRORS", s.errors, Color::LightRed);
+    render_kpi_card(f, cols[2], "WARNS", s.warnings, Color::Yellow);
+    render_kpi_card(f, cols[3], "PERF", s.performance, Color::Magenta);
+    render_kpi_card(f, cols[4], "SECURITY", s.security, Color::LightCyan);
+
+    let timeline_data: Vec<u64> = if state.data.telemetry.log_timeline.is_empty() {
+        vec![
+            s.errors as u64,
+            s.warnings as u64,
+            s.performance as u64,
+            s.security as u64,
+            state.data.incidents.len() as u64,
+        ]
+    } else {
+        state.data.telemetry.log_timeline.clone()
+    };
+
+    let sparkline = Sparkline::default()
+        .block(
+            Block::default()
+                .title(" ACTIVITY TREND ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::LightMagenta)),
+        )
+        .data(&timeline_data)
+        .style(Style::default().fg(Color::LightMagenta));
+    f.render_widget(sparkline, cols[5]);
 }
 
 fn render_kpi_card(f: &mut Frame<'_>, area: Rect, label: &str, count: usize, color: Color) {
@@ -396,12 +469,19 @@ fn draw_sidebar(f: &mut Frame<'_>, area: Rect, state: &TuiState) {
             } else {
                 Style::default().fg(Color::White)
             };
+            let prefix = if idx <= 9 {
+                format!("[{idx}]")
+            } else {
+                "   ".to_string()
+            };
             ListItem::new(Line::from(vec![
-                Span::styled(format!(" {:<21}", label), style),
+                Span::styled(format!(" {prefix} {:<17}", truncate_str(label, 17)), style),
                 Span::styled(
                     format!("{:>4} ", count),
                     if idx == state.module_idx {
                         style
+                    } else if count > 0 {
+                        Style::default().fg(Color::Yellow)
                     } else {
                         Style::default().fg(Color::DarkGray)
                     },
@@ -415,7 +495,7 @@ fn draw_sidebar(f: &mut Frame<'_>, area: Rect, state: &TuiState) {
 
     let list = List::new(items).block(
         Block::default()
-            .title(" Diagnostic Modules ")
+            .title(" Modules (0-9) ")
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::Blue)),
@@ -452,7 +532,7 @@ fn draw_findings_panel(f: &mut Frame<'_>, area: Rect, state: &TuiState) {
         let msg = if !state.data.incidents.is_empty() && state.module_idx == 0 {
             render_incidents_summary(&state.data.incidents)
         } else {
-            "No findings match the current module and filter.".to_string()
+            "✓ No findings match the current module and filter.".to_string()
         };
         f.render_widget(
             Paragraph::new(msg)
@@ -481,10 +561,7 @@ fn draw_findings_panel(f: &mut Frame<'_>, area: Rect, state: &TuiState) {
                     format!("[{}] ", finding.id),
                     Style::default().fg(Color::DarkGray),
                 ),
-                Span::styled(
-                    finding.title.clone(),
-                    Style::default().fg(Color::White),
-                ),
+                Span::styled(finding.title.clone(), Style::default().fg(Color::White)),
             ]))
         })
         .collect();
@@ -494,12 +571,121 @@ fn draw_findings_panel(f: &mut Frame<'_>, area: Rect, state: &TuiState) {
 
     let list = List::new(items)
         .block(block)
+        .highlight_symbol("▌")
         .highlight_style(
             Style::default()
                 .bg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
         );
     f.render_stateful_widget(list, area, &mut list_state);
+
+    let mut scroll_state = ScrollbarState::new(filtered.len()).position(state.selected_finding);
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
+    f.render_stateful_widget(scrollbar, area, &mut scroll_state);
+}
+
+fn draw_inline_inspector(f: &mut Frame<'_>, area: Rect, state: &TuiState) {
+    let block = Block::default()
+        .title(" Live Inspector ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Magenta));
+
+    let Some(finding) = state.filtered_findings().get(state.selected_finding).copied() else {
+        f.render_widget(
+            Paragraph::new("Select a finding to inspect evidence and code context.")
+                .style(Style::default().fg(Color::DarkGray))
+                .block(block),
+            area,
+        );
+        return;
+    };
+
+    let lines = build_finding_lines(finding);
+    f.render_widget(
+        Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn build_finding_lines(finding: &Finding) -> Vec<Line<'_>> {
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("ID: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                &finding.id,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" | "),
+            Span::styled(&finding.module, Style::default().fg(Color::Yellow)),
+            Span::raw(" | Conf: "),
+            Span::styled(
+                format!("{:?}", finding.confidence),
+                Style::default().fg(Color::Green),
+            ),
+        ]),
+        Line::from(Span::styled(
+            &finding.title,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(vec![
+            Span::styled("Component: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(&finding.affected_component, Style::default().fg(Color::LightBlue)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Evidence:",
+            Style::default()
+                .fg(Color::LightCyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+    ];
+
+    for ev in &finding.evidence {
+        if ev.source == "code_frame" {
+            lines.push(Line::from(Span::styled(
+                "Code Frame:",
+                Style::default().fg(Color::Yellow),
+            )));
+            for code_line in ev.detail.lines() {
+                let style = if code_line.starts_with(">>") {
+                    Style::default()
+                        .fg(Color::LightRed)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Gray)
+                };
+                lines.push(Line::from(Span::styled(format!("  {code_line}"), style)));
+            }
+        } else {
+            let kind_color = match ev.kind {
+                EvidenceKind::Observed => Color::Green,
+                EvidenceKind::Correlated => Color::Magenta,
+                EvidenceKind::Hypothesis => Color::Yellow,
+            };
+            lines.push(Line::from(vec![
+                Span::styled(format!("  • [{:?}] ", ev.kind), Style::default().fg(kind_color)),
+                Span::raw(&ev.detail),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Recommended Next Step:",
+        Style::default()
+            .fg(Color::LightGreen)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::styled(
+        format!("  {}", finding.next_step),
+        Style::default().fg(Color::White),
+    )));
+    lines
 }
 
 fn render_incidents_summary(incidents: &[Incident]) -> String {
@@ -516,7 +702,7 @@ fn draw_footer(f: &mut Frame<'_>, area: Rect, state: &TuiState) {
     } else if let Some(ref banner) = state.status_banner {
         format!(" {banner}  |  [q] Quit  [?] Help")
     } else {
-        " [↑/↓] Navigate  [Tab/←/→] Module  [Enter] Inspect  [/] Search  [f] Filter  [r] Refresh  [?] Help  [q] Quit".to_string()
+        " [↑/↓] Navigate  [Tab/0-9] Module  [Enter] Modal  [/] Search  [f] Filter  [r] Refresh  [?] Help  [q] Quit".to_string()
     };
 
     f.render_widget(
@@ -526,43 +712,10 @@ fn draw_footer(f: &mut Frame<'_>, area: Rect, state: &TuiState) {
 }
 
 fn draw_detail_modal(f: &mut Frame<'_>, finding: &Finding) {
-    let area = centered_rect(76, 70, f.area());
+    let area = centered_rect(78, 74, f.area());
     f.render_widget(Clear, area);
 
-    let mut lines = vec![
-        Line::from(vec![
-            Span::styled("ID: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(&finding.id, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::raw("  |  Module: "),
-            Span::styled(&finding.module, Style::default().fg(Color::Yellow)),
-            Span::raw("  |  Confidence: "),
-            Span::styled(format!("{:?}", finding.confidence), Style::default().fg(Color::Green)),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled(
-            &finding.title,
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(vec![
-            Span::styled("Component: ", Style::default().fg(Color::DarkGray)),
-            Span::raw(&finding.affected_component),
-        ]),
-        Line::from(""),
-        Line::from(Span::styled("Evidence:", Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD))),
-    ];
-
-    for ev in &finding.evidence {
-        lines.push(Line::from(format!("  • [{:?}] ({}) {}", ev.kind, ev.source, ev.detail)));
-    }
-
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "Recommended Next Step:",
-        Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD),
-    )));
-    lines.push(Line::from(format!("  {}", finding.next_step)));
-
-    let modal = Paragraph::new(lines)
+    let modal = Paragraph::new(build_finding_lines(finding))
         .block(
             Block::default()
                 .title(" Finding Inspector (Esc to close) ")
@@ -570,20 +723,21 @@ fn draw_detail_modal(f: &mut Frame<'_>, finding: &Finding) {
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(Color::LightCyan)),
         )
-        .wrap(Wrap { trim: true });
+        .wrap(Wrap { trim: false });
     f.render_widget(modal, area);
 }
 
 fn draw_help_modal(f: &mut Frame<'_>) {
-    let area = centered_rect(55, 50, f.area());
+    let area = centered_rect(58, 52, f.area());
     f.render_widget(Clear, area);
 
     let help_text = "\
   Keyboard Shortcuts:
     ↑ / ↓ / j / k   Navigate findings
     Tab / ← / →     Switch diagnostic module
-    Enter           Open finding evidence inspector
-    /               Search findings
+    0 .. 9          Quick-jump to module
+    Enter           Toggle full-screen finding modal
+    /               Live search findings
     f               Cycle severity filter (All / High+ / Med+)
     r               Refresh diagnostics
     Esc             Close modal or clear search
@@ -606,6 +760,14 @@ fn severity_badge(sev: Severity) -> (&'static str, Color) {
         Severity::Medium => ("MED ", Color::Yellow),
         Severity::Low => ("LOW ", Color::Blue),
         Severity::Info => ("INFO", Color::Gray),
+    }
+}
+
+fn truncate_str(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        s.chars().take(max).collect()
     }
 }
 
