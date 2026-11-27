@@ -186,9 +186,10 @@ impl TuiState {
     }
 }
 
-pub fn run_tui<F>(initial: ResponseEnvelope, mut refresh_fn: F) -> io::Result<()>
+pub fn run_tui<F, E>(initial: ResponseEnvelope, mut refresh_fn: F, mut export_md_fn: E) -> io::Result<()>
 where
     F: FnMut() -> Option<ResponseEnvelope>,
+    E: FnMut(&ResponseEnvelope) -> Result<String, String>,
 {
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -204,7 +205,7 @@ where
     let mut terminal = Terminal::new(backend)?;
 
     let mut state = TuiState::new(initial);
-    let res = event_loop(&mut terminal, &mut state, &mut refresh_fn);
+    let res = event_loop(&mut terminal, &mut state, &mut refresh_fn, &mut export_md_fn);
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -213,13 +214,15 @@ where
     res
 }
 
-fn event_loop<F>(
+fn event_loop<F, E>(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     state: &mut TuiState,
     refresh_fn: &mut F,
+    export_md_fn: &mut E,
 ) -> io::Result<()>
 where
     F: FnMut() -> Option<ResponseEnvelope>,
+    E: FnMut(&ResponseEnvelope) -> Result<String, String>,
 {
     loop {
         terminal.draw(|f| draw_ui(f, state))?;
@@ -313,6 +316,14 @@ where
                             state.status_banner = Some("Diagnostics refreshed".to_string());
                         }
                     }
+                    KeyCode::Char('e') => match export_md_fn(&state.data) {
+                        Ok(path) => {
+                            state.status_banner = Some(format!("Exported Markdown to {path}"));
+                        }
+                        Err(err) => {
+                            state.status_banner = Some(format!("Export failed: {err}"));
+                        }
+                    },
                     _ => {}
                 }
             }
@@ -764,7 +775,7 @@ fn draw_footer(f: &mut Frame<'_>, area: Rect, state: &TuiState) {
     } else if let Some(ref banner) = state.status_banner {
         format!(" {banner}  |  [q] Quit  [?] Help")
     } else {
-        " [↑/↓] Nav  [Tab/0-9] Module  [c] Command Palette  [Enter] Modal  [/] Search  [f] Filter  [r] Refresh  [?] Help  [q] Quit".to_string()
+        " [↑/↓] Nav  [c] Palette  [e] Export .md  [Enter] Modal  [/] Search  [f] Filter  [r] Refresh  [q] Quit".to_string()
     };
 
     f.render_widget(

@@ -446,9 +446,17 @@ fn run_status(
         Ok(resp) => {
             if allow_tui && format == OutputFormat::Text && !cli.no_interaction && io::stdout().is_tty() {
                 let p = project_path.clone();
-                run_tui(resp, move || {
-                    build_full_response(&p, None, &LogFilter::default(), 500.0, 1000.0).ok()
-                })?;
+                let p_export = project_path.clone();
+                run_tui(
+                    resp,
+                    move || build_full_response(&p, None, &LogFilter::default(), 500.0, 1000.0).ok(),
+                    move |data| {
+                        let out = p_export.join("incidentlens-report.md");
+                        let md = render_markdown(data);
+                        fs::write(&out, md).map_err(|e| e.to_string())?;
+                        Ok("incidentlens-report.md".to_string())
+                    },
+                )?;
                 return Ok(ExitCode::Success);
             }
             emit_response(cli, format, &resp)?;
