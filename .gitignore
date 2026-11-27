@@ -1,0 +1,7 @@
+/target/
+/vendor/
+/packages/laravel/vendor/
+/packages/laravel/composer.lock
+.phpunit.result.cache
+*.log
+.DS_Store

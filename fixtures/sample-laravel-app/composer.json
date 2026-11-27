@@ -1,0 +1,8 @@
+{
+    "name": "acme/sample-laravel-app",
+    "type": "project",
+    "require": {
+        "php": "^8.3",
+        "laravel/framework": "^12.0"
+    }
+}

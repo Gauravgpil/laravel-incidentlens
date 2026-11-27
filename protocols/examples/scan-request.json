@@ -1,0 +1,30 @@
+{
+  "protocol_version": "1.0",
+  "command": "scan",
+  "project": {
+    "root": "/var/www/app",
+    "name": "SampleApp",
+    "laravel_version": "12.0.0",
+    "php_version": "8.3.12",
+    "environment": "production",
+    "debug": true,
+    "drivers": {
+      "cache": "redis",
+      "queue": "sync",
+      "database": "mysql",
+      "session": "redis",
+      "log": "stack"
+    },
+    "log_paths": [
+      "/var/www/app/storage/logs/laravel.log"
+    ],
+    "config_flags": {
+      "app_key_set": true,
+      "app_debug": true,
+      "runtime_collector_enabled": false
+    }
+  },
+  "options": {
+    "modules": ["project"]
+  }
+}

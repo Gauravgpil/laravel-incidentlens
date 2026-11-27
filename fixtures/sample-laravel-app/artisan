@@ -1,0 +1,4 @@
+#!/usr/bin/env php
+<?php
+// Minimal artisan stub for Phase 1 fixture testing
+echo "Laravel Framework\n";

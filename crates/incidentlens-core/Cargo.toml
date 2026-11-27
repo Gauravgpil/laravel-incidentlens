@@ -1,0 +1,13 @@
+[package]
+name = "incidentlens-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core protocol, models, redaction, and validation for Laravel IncidentLens"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
