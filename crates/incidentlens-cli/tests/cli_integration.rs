@@ -154,4 +154,21 @@ fn preflight_incident_code_and_csv_export_work() {
         .args(["--format=json"])
         .assert()
         .success();
+
+    // Verify stdin RequestEnvelope respects options.modules filtering
+    let req_json = serde_json::json!({
+        "protocol_version": "1.0",
+        "command": "scan",
+        "project": { "root": fixture.path().display().to_string() },
+        "options": { "modules": ["security"], "scope": "secrets" }
+    })
+    .to_string();
+
+    Command::cargo_bin("incidentlens")
+        .unwrap()
+        .args(["scan", "--stdin-json", "--format=json"])
+        .write_stdin(req_json)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"module\": \"migration\"").not());
 }

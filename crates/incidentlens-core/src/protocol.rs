@@ -73,6 +73,7 @@ pub struct RequestOptions {
     pub since: Option<String>,
     pub limit: Option<usize>,
     pub modules: Vec<String>,
+    pub scope: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]

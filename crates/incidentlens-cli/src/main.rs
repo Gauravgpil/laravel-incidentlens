@@ -393,7 +393,11 @@ fn run_scan(
     stdin_json: bool,
     ci: bool,
 ) -> Result<ExitCode, Box<dyn std::error::Error>> {
-    let (project_path, runtime_meta): (PathBuf, Option<ProjectMetadata>) = if stdin_json {
+    let (project_path, runtime_meta, req_options): (
+        PathBuf,
+        Option<ProjectMetadata>,
+        Option<incidentlens_core::RequestOptions>,
+    ) = if stdin_json {
         let mut buf = String::new();
         io::stdin().read_to_string(&mut buf)?;
         let req: RequestEnvelope = match serde_json::from_str(&buf) {
@@ -417,13 +421,31 @@ fn run_scan(
             .filter(|p| !p.root.is_empty())
             .map(|p| PathBuf::from(&p.root))
             .unwrap_or_else(|| resolve_project_path(cli).unwrap_or_else(|_| PathBuf::from(".")));
-        (path, req.project)
+        (path, req.project, Some(req.options))
     } else {
-        (resolve_project_path(cli)?, None)
+        (resolve_project_path(cli)?, None, None)
     };
 
     match build_full_response(&project_path, runtime_meta.as_ref(), &LogFilter::default(), 500.0, 1000.0) {
-        Ok(resp) => {
+        Ok(mut resp) => {
+            if let Some(ref opts) = req_options {
+                if !opts.modules.is_empty() {
+                    if opts.modules.len() == 1 && opts.modules[0] == "security" {
+                        if let Some(ref scope) = opts.scope {
+                            if let Some(ref proj) = resp.project {
+                                let scoped = SecurityAnalyzer::analyze_scoped(&project_path, proj, scope);
+                                resp.findings.retain(|f| f.module != "security");
+                                resp.findings.extend(scoped);
+                            }
+                        }
+                    }
+                    resp.findings.retain(|f| opts.modules.iter().any(|m| m == &f.module));
+                    let recomputed = ResponseEnvelope::ok(resp.project.clone(), resp.findings.clone());
+                    resp.summary = recomputed.summary;
+                    resp.telemetry.health_score = recomputed.telemetry.health_score;
+                }
+            }
+
             let has_blocking = resp
                 .findings
                 .iter()

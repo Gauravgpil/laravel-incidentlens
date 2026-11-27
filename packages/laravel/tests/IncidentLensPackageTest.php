@@ -46,6 +46,7 @@ final class IncidentLensPackageTest extends TestCase
     {
         $commands = array_keys($this->app->make('Illuminate\Contracts\Console\Kernel')->all());
         $this->assertContains('incidentlens:audit', $commands);
+        $this->assertContains('incidentlens:install', $commands);
         $this->assertContains('security:audit', $commands);
         $this->assertContains('incidentlens:doctor', $commands);
         $this->assertContains('incidentlens:status', $commands);

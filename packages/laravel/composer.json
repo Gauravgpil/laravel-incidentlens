@@ -23,6 +23,9 @@
             "Gaurav\\IncidentLens\\Tests\\": "tests/"
         }
     },
+    "bin": [
+        "bin/incidentlens"
+    ],
     "extra": {
         "laravel": {
             "providers": [
