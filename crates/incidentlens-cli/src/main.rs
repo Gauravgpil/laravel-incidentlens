@@ -19,9 +19,14 @@ use incidentlens_reporter::{render_csv, render_html, render_markdown, render_ter
 use incidentlens_storage::{compare_snapshots, load_snapshot, save_snapshot};
 use incidentlens_tui::run_tui;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
+use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum OutputFormat {
@@ -365,13 +370,79 @@ fn build_full_response(
     Ok(resp)
 }
 
+struct LiveSpinner {
+    stop: Arc<AtomicBool>,
+    stage: Arc<Mutex<&'static str>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl LiveSpinner {
+    fn start(enabled: bool, initial_stage: &'static str) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stage = Arc::new(Mutex::new(initial_stage));
+        if !enabled {
+            return Self {
+                stop,
+                stage,
+                handle: None,
+            };
+        }
+
+        let stop_clone = Arc::clone(&stop);
+        let stage_clone = Arc::clone(&stage);
+        let handle = std::thread::spawn(move || {
+            let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let start = Instant::now();
+            let mut idx = 0usize;
+            while !stop_clone.load(Ordering::Relaxed) {
+                let current_stage = *stage_clone.lock().unwrap_or_else(|e| e.into_inner());
+                let elapsed = start.elapsed().as_secs_f32();
+                eprint!(
+                    "\r\x1b[2K\x1b[36m{}\x1b[0m \x1b[1mIncidentLens\x1b[0m \x1b[90m│\x1b[0m {} \x1b[33m({elapsed:.1}s)\x1b[0m",
+                    frames[idx % frames.len()],
+                    current_stage
+                );
+                let _ = io::stderr().flush();
+                idx += 1;
+                std::thread::sleep(std::time::Duration::from_millis(80));
+            }
+            eprint!("\r\x1b[2K");
+            let _ = io::stderr().flush();
+        });
+
+        Self {
+            stop,
+            stage,
+            handle: Some(handle),
+        }
+    }
+
+    fn set_stage(&self, next: &'static str) {
+        if let Ok(mut guard) = self.stage.lock() {
+            *guard = next;
+        }
+    }
+
+    fn finish(mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
 fn run_status(
     cli: &Cli,
     format: OutputFormat,
     allow_tui: bool,
 ) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let project_path = resolve_project_path(cli)?;
-    match build_full_response(&project_path, None, &LogFilter::default(), 500.0, 1000.0) {
+    let show_spinner = !cli.quiet && !cli.no_interaction && io::stderr().is_tty();
+    let spinner = LiveSpinner::start(show_spinner, "Analyzing Laravel project & logs...");
+    let res = build_full_response(&project_path, None, &LogFilter::default(), 500.0, 1000.0);
+    spinner.finish();
+
+    match res {
         Ok(resp) => {
             if allow_tui && format == OutputFormat::Text && !cli.no_interaction && io::stdout().is_tty() {
                 let p = project_path.clone();
@@ -426,7 +497,13 @@ fn run_scan(
         (resolve_project_path(cli)?, None, None)
     };
 
-    match build_full_response(&project_path, runtime_meta.as_ref(), &LogFilter::default(), 500.0, 1000.0) {
+    let show_spinner = !cli.quiet && !cli.no_interaction && format != OutputFormat::Json && io::stderr().is_tty();
+    let spinner = LiveSpinner::start(show_spinner, "Running Rust diagnostic modules...");
+    let res = build_full_response(&project_path, runtime_meta.as_ref(), &LogFilter::default(), 500.0, 1000.0);
+    spinner.set_stage("Correlating incidents...");
+    spinner.finish();
+
+    match res {
         Ok(mut resp) => {
             if let Some(ref opts) = req_options {
                 if !opts.modules.is_empty() {

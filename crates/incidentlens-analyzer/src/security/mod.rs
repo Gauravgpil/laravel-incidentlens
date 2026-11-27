@@ -25,8 +25,12 @@ impl SecurityAnalyzer {
         if all || matches!(scope, "secrets" | "ai" | "leaks") {
             findings.extend(secrets::scan_secrets_and_ai_keys(project_root, report));
         }
-        if all || scope == "git" {
+        // Full git patch history scan is expensive on large repos; run on explicit `git` scope
+        // or check only `.env` in git history during `all`.
+        if scope == "git" {
             findings.extend(secrets::scan_git_history(project_root));
+        } else if all {
+            findings.extend(secrets::scan_git_env_only(project_root));
         }
         if all || matches!(scope, "auth" | "idor") {
             findings.extend(auth::scan_auth_and_access_control(project_root, report));

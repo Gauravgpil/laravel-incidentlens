@@ -89,12 +89,12 @@ final class EngineClient
      *
      * @param array<string, mixed> $projectMetadata
      * @param array<string, mixed> $options
+     * @param callable(float):void|null $onTick Optional progress callback invoked with elapsed seconds while Rust runs
      * @return array{exit_code: int, response: array<string, mixed>}
      */
-    public function scan(array $projectMetadata, array $options = [], bool $ci = false): array
+    public function scan(array $projectMetadata, array $options = [], bool $ci = false, ?callable $onTick = null): array
     {
         $binary = $this->resolveBinary();
-        $this->protocolInfo();
 
         $envelope = [
             'protocol_version' => self::PROTOCOL_VERSION,
@@ -113,7 +113,15 @@ final class EngineClient
         $process = new Process($args);
         $process->setTimeout($this->timeoutSeconds);
         $process->setInput($payload);
-        $process->run();
+        $process->start();
+
+        $started = microtime(true);
+        while ($process->isRunning()) {
+            if ($onTick !== null) {
+                $onTick(microtime(true) - $started);
+            }
+            usleep(80_000);
+        }
 
         $exitCode = $process->getExitCode() ?? 3;
         if (! in_array($exitCode, [0, 1], true)) {
@@ -123,6 +131,12 @@ final class EngineClient
         $decoded = json_decode($process->getOutput(), true);
         if (! is_array($decoded)) {
             throw new EngineException('Malformed JSON response from IncidentLens engine.');
+        }
+
+        $version = (string) ($decoded['protocol_version'] ?? '');
+        $major = explode('.', $version)[0] ?? '';
+        if ($major !== self::SUPPORTED_MAJOR) {
+            throw EngineException::incompatibleProtocol($version, self::SUPPORTED_MAJOR);
         }
 
         return [

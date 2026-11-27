@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Gaurav\IncidentLens\Commands;
 
+use Gaurav\IncidentLens\Commands\Concerns\RendersLiveSpinner;
 use Gaurav\IncidentLens\Engine\EngineClient;
 use Gaurav\IncidentLens\Engine\EngineException;
 use Gaurav\IncidentLens\Support\ProjectInspector;
@@ -11,6 +12,7 @@ use Illuminate\Console\Command;
 
 final class AuditCommand extends Command
 {
+    use RendersLiveSpinner;
     protected $signature = 'incidentlens:audit
         {module=all : Audit module (all, performance, n1, memory, security, database, queue, api, code, production, frontend, scalability)}
         {--ci : Exit non-zero if high/critical findings exist}
@@ -43,7 +45,7 @@ final class AuditCommand extends Command
         $ci = (bool) $this->option('ci');
 
         try {
-            $result = $engine->scan($inspector->inspect(), [], $ci);
+            $result = $this->scanWithSpinner($engine, $inspector->inspect(), [], $ci, "Auditing {$module}...");
         } catch (EngineException $e) {
             $this->error($e->getMessage());
             return 3;

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Gaurav\IncidentLens\Commands;
 
+use Gaurav\IncidentLens\Commands\Concerns\RendersLiveSpinner;
 use Gaurav\IncidentLens\Engine\EngineClient;
 use Gaurav\IncidentLens\Engine\EngineException;
 use Gaurav\IncidentLens\Support\ProjectInspector;
@@ -11,6 +12,7 @@ use Illuminate\Console\Command;
 
 final class SecurityAuditCommand extends Command
 {
+    use RendersLiveSpinner;
     protected $signature = 'security:audit
         {--scope=all : Scope (all, secrets, ai, git, auth, vulnerabilities, storage, webhooks, leaks)}
         {--ci : Exit non-zero if high/critical security findings exist}
@@ -38,7 +40,13 @@ final class SecurityAuditCommand extends Command
         $ci = (bool) $this->option('ci');
 
         try {
-            $result = $engine->scan($inspector->inspect(), ['modules' => ['security'], 'scope' => $scope], $ci);
+            $result = $this->scanWithSpinner(
+                $engine,
+                $inspector->inspect(),
+                ['modules' => ['security'], 'scope' => $scope],
+                $ci,
+                "Running Security Engine ({$scope})..."
+            );
         } catch (EngineException $e) {
             $this->error($e->getMessage());
             return 3;

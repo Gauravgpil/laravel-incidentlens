@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Gaurav\IncidentLens\Commands;
 
+use Gaurav\IncidentLens\Commands\Concerns\RendersLiveSpinner;
 use Gaurav\IncidentLens\Engine\EngineClient;
 use Gaurav\IncidentLens\Engine\EngineException;
 use Gaurav\IncidentLens\Support\ProjectInspector;
@@ -11,6 +12,7 @@ use Illuminate\Console\Command;
 
 final class ScanCommand extends Command
 {
+    use RendersLiveSpinner;
     protected $signature = 'incidentlens:scan {--ci : Exit non-zero if high/critical findings exist} {--json : Output as JSON}';
     protected $description = 'Run a diagnostic scan using the Rust IncidentLens engine';
 
@@ -19,7 +21,7 @@ final class ScanCommand extends Command
         $ci = (bool) $this->option('ci');
 
         try {
-            $result = $engine->scan($inspector->inspect(), [], $ci);
+            $result = $this->scanWithSpinner($engine, $inspector->inspect(), [], $ci, 'Scanning Laravel application...');
         } catch (EngineException $e) {
             $this->error($e->getMessage());
             return 3;

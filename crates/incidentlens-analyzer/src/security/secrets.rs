@@ -238,43 +238,47 @@ pub fn scan_secrets_and_ai_keys(project_root: &Path, report: &ProjectReport) -> 
     findings
 }
 
+/// Fast check: verifies whether `.env` was ever committed in Git history.
+pub fn scan_git_env_only(project_root: &Path) -> Vec<Finding> {
+    if !project_root.join(".git").exists() {
+        return Vec::new();
+    }
+    let mut findings = Vec::new();
+    if let Ok(out) = Command::new("git")
+        .args(["-C"])
+        .arg(project_root)
+        .args(["log", "-n", "1", "--all", "--oneline", "--", ".env"])
+        .output()
+    {
+        if out.status.success() && !String::from_utf8_lossy(&out.stdout).trim().is_empty() {
+            findings.push(Finding {
+                id: "SEC-GIT-ENV".to_string(),
+                module: "security".to_string(),
+                title: ".env file found in Git commit history".to_string(),
+                severity: Severity::Critical,
+                confidence: Confidence::High,
+                affected_component: ".git history (.env)".to_string(),
+                evidence: vec![Evidence {
+                    kind: EvidenceKind::Observed,
+                    source: "security_git".to_string(),
+                    detail: "`.env` was committed in past Git history and remains recoverable even if deleted later.".to_string(),
+                }],
+                first_observed: None,
+                last_observed: None,
+                next_step: "Rotate all credentials in `.env` and purge `.env` from Git history (`git filter-repo`).".to_string(),
+            });
+        }
+    }
+    findings
+}
+
 /// Scans recent Git commit history (up to 50 commits) for committed secrets or `.env` files.
 pub fn scan_git_history(project_root: &Path) -> Vec<Finding> {
     if !project_root.join(".git").exists() {
         return Vec::new();
     }
 
-    let mut findings = Vec::new();
-
-    // Check if `.env` was ever committed in git history
-    if let Ok(out) = Command::new("git")
-        .args(["-C"])
-        .arg(project_root)
-        .args(["log", "--all", "--full-history", "--oneline", "--", ".env"])
-        .output()
-    {
-        if out.status.success() {
-            let commits = String::from_utf8_lossy(&out.stdout);
-            if !commits.trim().is_empty() {
-                findings.push(Finding {
-                    id: "SEC-GIT-ENV".to_string(),
-                    module: "security".to_string(),
-                    title: ".env file found in Git commit history".to_string(),
-                    severity: Severity::Critical,
-                    confidence: Confidence::High,
-                    affected_component: ".git history (.env)".to_string(),
-                    evidence: vec![Evidence {
-                        kind: EvidenceKind::Observed,
-                        source: "security_git".to_string(),
-                        detail: "`.env` was committed in past Git history and remains recoverable even if deleted later.".to_string(),
-                    }],
-                    first_observed: None,
-                    last_observed: None,
-                    next_step: "Rotate all credentials in `.env` and purge `.env` from Git history (`git filter-repo`).".to_string(),
-                });
-            }
-        }
-    }
+    let mut findings = scan_git_env_only(project_root);
 
     // Scan recent 50 commit patches for secret patterns (masked output only)
     if let Ok(out) = Command::new("git")
