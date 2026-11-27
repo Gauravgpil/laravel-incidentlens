@@ -1,8 +1,10 @@
 pub mod api;
+pub mod architecture;
 pub mod cache;
 pub mod code;
 pub mod database;
 pub mod dependencies;
+pub mod framework;
 pub mod git_corr;
 pub mod logs;
 pub mod migrations;
@@ -10,14 +12,18 @@ pub mod performance;
 pub mod preflight;
 pub mod project;
 pub mod queue;
+pub mod resources;
 pub mod scheduler;
 pub mod security;
+pub mod tests_intel;
 
 pub use api::ApiAnalyzer;
+pub use architecture::ArchitectureAnalyzer;
 pub use cache::CacheAnalyzer;
 pub use code::CodeAnalyzer;
 pub use database::{DatabaseAnalysis, DatabaseAnalyzer, QueryFingerprintStat};
 pub use dependencies::DependencyAnalyzer;
+pub use framework::FrameworkAnalyzer;
 pub use git_corr::GitCorrelator;
 pub use logs::LogAnalyzer;
 pub use migrations::MigrationAnalyzer;
@@ -25,5 +31,7 @@ pub use performance::{EndpointStat, PerformanceAnalysis, PerformanceAnalyzer, Pe
 pub use preflight::{CheckStatus, PreflightCheck, PreflightReport, PreflightScanner};
 pub use project::{AnalyzerError, ProjectAnalysis, ProjectAnalyzer};
 pub use queue::{JobFailureStat, QueueAnalysis, QueueAnalyzer};
+pub use resources::ResourceAnalyzer;
 pub use scheduler::SchedulerAnalyzer;
 pub use security::SecurityAnalyzer;
+pub use tests_intel::TestingAnalyzer;

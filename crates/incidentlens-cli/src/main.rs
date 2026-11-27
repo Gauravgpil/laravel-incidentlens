@@ -2,9 +2,10 @@ use chrono::{Duration as ChronoDuration, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use crossterm::tty::IsTty;
 use incidentlens_analyzer::{
-    AnalyzerError, ApiAnalyzer, CacheAnalyzer, CheckStatus, CodeAnalyzer, DatabaseAnalyzer,
-    DependencyAnalyzer, GitCorrelator, LogAnalyzer, MigrationAnalyzer, PerformanceAnalyzer,
-    PreflightScanner, ProjectAnalyzer, QueueAnalyzer, SchedulerAnalyzer, SecurityAnalyzer,
+    AnalyzerError, ApiAnalyzer, ArchitectureAnalyzer, CacheAnalyzer, CheckStatus, CodeAnalyzer,
+    DatabaseAnalyzer, DependencyAnalyzer, FrameworkAnalyzer, GitCorrelator, LogAnalyzer,
+    MigrationAnalyzer, PerformanceAnalyzer, PreflightScanner, ProjectAnalyzer, QueueAnalyzer,
+    ResourceAnalyzer, SchedulerAnalyzer, SecurityAnalyzer, TestingAnalyzer,
 };
 use incidentlens_core::{
     is_protocol_compatible, CoreError, ExitCode, ProjectMetadata, ProtocolInfo, RequestEnvelope,
@@ -127,6 +128,17 @@ enum Commands {
     Cache,
     /// Inspect Laravel scheduled tasks for overlap protection risks
     Scheduler,
+    /// Analyze app/ class dependency graph, circular dependencies, and layer boundaries
+    Architecture,
+    /// Inspect ServiceProviders and ecosystem compatibility (Octane, Horizon, Sanctum)
+    Framework,
+    /// Analyze PHPUnit/Pest JUnit XML reports and untested controller candidates
+    Tests {
+        #[arg(long)]
+        junit: Option<PathBuf>,
+    },
+    /// Inspect storage/logs disk usage and unrotated oversized log files
+    Resources,
     /// Pre-deployment readiness scanner ([PASS]/[WARN]/[FAIL])
     Preflight {
         /// Exit with code 1 if preflight is BLOCKED
@@ -243,6 +255,10 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ExitCode, Box<dyn std::error::
         Some(Commands::Api { slow_ms }) => run_filtered_scan(cli, format, Some("api"), 500.0, *slow_ms),
         Some(Commands::Cache) => run_filtered_scan(cli, format, Some("cache"), 500.0, 1000.0),
         Some(Commands::Scheduler) => run_filtered_scan(cli, format, Some("scheduler"), 500.0, 1000.0),
+        Some(Commands::Architecture) => run_filtered_scan(cli, format, Some("architecture"), 500.0, 1000.0),
+        Some(Commands::Framework) => run_filtered_scan(cli, format, Some("framework"), 500.0, 1000.0),
+        Some(Commands::Tests { junit }) => run_module_tests(cli, format, junit.as_deref()),
+        Some(Commands::Resources) => run_filtered_scan(cli, format, Some("resources"), 500.0, 1000.0),
         Some(Commands::Preflight { ci }) => run_preflight(cli, format, *ci),
         Some(Commands::Incident) => run_incident(cli, format),
         Some(Commands::Snapshot { name }) => run_snapshot(cli, format, name),
@@ -287,11 +303,17 @@ fn build_full_response(
     let api_findings = ApiAnalyzer::analyze(project_path, &runtime_events, slow_endpoint_ms);
     let cache_findings = CacheAnalyzer::analyze(&project_analysis.report, &runtime_events);
     let sched_findings = SchedulerAnalyzer::analyze(project_path);
+    let arch_findings = ArchitectureAnalyzer::analyze(project_path);
+    let fw_findings = FrameworkAnalyzer::analyze(project_path);
+    let res_findings = ResourceAnalyzer::analyze(project_path);
+    let test_findings = TestingAnalyzer::analyze(project_path, None);
 
     let mut findings = Vec::new();
     findings.extend(project_analysis.findings);
     findings.extend(log_findings);
     findings.extend(code_findings);
+    findings.extend(arch_findings);
+    findings.extend(fw_findings);
     findings.extend(db_analysis.findings);
     findings.extend(api_findings);
     findings.extend(queue_analysis.findings);
@@ -299,6 +321,8 @@ fn build_full_response(
     findings.extend(perf_analysis.findings);
     findings.extend(sec_findings);
     findings.extend(sched_findings);
+    findings.extend(res_findings);
+    findings.extend(test_findings);
     findings.extend(mig_findings);
     findings.extend(dep_findings);
 
@@ -628,6 +652,23 @@ fn run_logs_follow(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
             pos = len;
         }
+    }
+}
+
+fn run_module_tests(
+    cli: &Cli,
+    format: OutputFormat,
+    junit: Option<&Path>,
+) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    let project_path = resolve_project_path(cli)?;
+    match ProjectAnalyzer::analyze(&project_path, None) {
+        Ok(proj) => {
+            let findings = TestingAnalyzer::analyze(&project_path, junit);
+            let resp = ResponseEnvelope::ok(Some(proj.report), findings);
+            emit_response(cli, format, &resp)?;
+            Ok(ExitCode::Success)
+        }
+        Err(err) => Ok(handle_analyzer_error(err, format)),
     }
 }
 

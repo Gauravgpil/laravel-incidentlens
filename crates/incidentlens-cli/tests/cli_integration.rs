@@ -122,4 +122,20 @@ fn preflight_incident_code_and_csv_export_work() {
         .assert()
         .success()
         .stdout(predicate::str::contains("id,module,severity,confidence,title"));
+
+    Command::cargo_bin("incidentlens")
+        .unwrap()
+        .args(["architecture", "--project"])
+        .arg(fixture.path())
+        .args(["--format=json"])
+        .assert()
+        .success();
+
+    Command::cargo_bin("incidentlens")
+        .unwrap()
+        .args(["tests", "--project"])
+        .arg(fixture.path())
+        .args(["--format=json"])
+        .assert()
+        .success();
 }

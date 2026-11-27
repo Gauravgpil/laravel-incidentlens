@@ -32,7 +32,9 @@ All capabilities are classified into priority tiers so each module is built incr
 | Git Change-to-Error Candidate Correlation | P0 | **Implemented** | `LogAnalyzer`, `git` CLI (read-only) |
 | Reporting (`json`, `markdown`, `html`, `csv`, ANSI) | P0 | **Implemented** | `incidentlens-core` |
 | Snapshot & Regression Comparison (`snapshot`, `compare`) | P0 | **Implemented** | `incidentlens-storage` |
-| Laravel Framework Compatibility & Service Provider Profiling | P1 | Planned | `ProjectInspector` |
-| Testing Intelligence (PHPUnit/Pest JUnit XML ingestion) | P1 | Planned | `incidentlens-parser` |
-| Application Dependency Graph & Request Trace Spans | P2 | Planned | `RuntimeCollector`, `code` |
+| Laravel Framework Compatibility & Service Provider Profiling | P1 | **Implemented** | `ProjectInspector` |
+| Testing Intelligence (PHPUnit/Pest JUnit XML ingestion) | P1 | **Implemented** | `incidentlens-core` |
+| Architecture & Circular Dependency Analysis | P1 | **Implemented** | `CodeAnalyzer` |
+| Memory & Disk Resource Intelligence | P1 | **Implemented** | `incidentlens-core` |
+| Full Request Trace Spans & Custom YAML/TOML Rules | P2 | Planned | `RuntimeCollector`, `code` |
 | Optional Local AI Explanation Provider & Plugin System | P3 | Planned | `CorrelationEngine` |
