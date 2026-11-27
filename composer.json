@@ -1,5 +1,5 @@
 {
-    "name": "gaurav/laravel-incidentlens",
+    "name": "incidentlens/laravel",
     "description": "High-performance, Rust-powered diagnostic engine, security auditor, and interactive TUI for Laravel applications.",
     "type": "library",
     "license": "MIT",

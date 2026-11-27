@@ -1,6 +1,6 @@
 # Laravel IncidentLens
 
-**Laravel IncidentLens** (`gaurav/laravel-incidentlens`) is an offline-first, read-only-by-default, Rust-powered diagnostic engine and interactive Ratatui TUI for Laravel applications.
+**Laravel IncidentLens** (`incidentlens/laravel`) is an offline-first, read-only-by-default, Rust-powered diagnostic engine and interactive Ratatui TUI for Laravel applications.
 
 ---
 
