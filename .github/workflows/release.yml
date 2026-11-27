@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: incidentlens
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bin: incidentlens
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: incidentlens.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }} -p incidentlens-cli
+      - name: Package & Checksum
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/${{ matrix.bin }} dist/incidentlens-${{ matrix.target }}${{ matrix.bin == 'incidentlens.exe' && '.exe' || '' }}
+          cd dist && sha256sum * > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: incidentlens-${{ matrix.target }}
+          path: dist/*

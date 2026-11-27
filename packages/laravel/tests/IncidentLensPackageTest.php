@@ -86,4 +86,14 @@ final class IncidentLensPackageTest extends TestCase
         $this->assertSame('ok', $result['response']['status']);
         $this->assertNotEmpty($result['response']['findings']);
     }
+
+    public function test_runtime_collector_normalizes_sql_without_collecting_bindings(): void
+    {
+        $sql = \Gaurav\IncidentLens\Collectors\RuntimeCollector::normalizeSql(
+            "select * from users where email = 'secret@example.com' and id = 42"
+        );
+        $this->assertSame('select * from users where email = ? and id = ?', $sql);
+        $this->assertStringNotContainsString('secret@example.com', $sql);
+        $this->assertStringNotContainsString('42', $sql);
+    }
 }

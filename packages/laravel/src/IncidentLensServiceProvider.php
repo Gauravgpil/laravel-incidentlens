@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace Gaurav\IncidentLens;
 
+use Gaurav\IncidentLens\Collectors\RuntimeCollector;
 use Gaurav\IncidentLens\Commands\DoctorCommand;
 use Gaurav\IncidentLens\Commands\ScanCommand;
 use Gaurav\IncidentLens\Commands\StatusCommand;
 use Gaurav\IncidentLens\Engine\EngineClient;
 use Gaurav\IncidentLens\Support\ProjectInspector;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\ServiceProvider;
 
 final class IncidentLensServiceProvider extends ServiceProvider
@@ -36,6 +38,18 @@ final class IncidentLensServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $config = $this->app->make('config');
+        if ((bool) $config->get('incidentlens.enabled', true) && (bool) $config->get('incidentlens.runtime.enabled', false)) {
+            $storagePath = (string) ($config->get('incidentlens.storage.path') ?? storage_path('app/incidentlens'));
+            $collector = new RuntimeCollector(
+                $storagePath,
+                (float) $config->get('incidentlens.performance.sampling_rate', 1.0),
+                (bool) $config->get('incidentlens.database.capture_queries', false),
+                (bool) $config->get('incidentlens.queue.enabled', true),
+            );
+            $collector->register($this->app->make(Dispatcher::class));
+        }
+
         if ($this->app->runningInConsole()) {
             $this->publishes([
                 __DIR__ . '/../config/incidentlens.php' => config_path('incidentlens.php'),

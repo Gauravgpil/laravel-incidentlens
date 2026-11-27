@@ -1,0 +1,681 @@
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::execute;
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
+use incidentlens_core::{Finding, Incident, ResponseEnvelope, Severity};
+use ratatui::backend::CrosstermBackend;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{
+    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
+};
+use ratatui::{Frame, Terminal};
+use std::io;
+use std::time::Duration;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeverityFilter {
+    All,
+    CriticalAndHigh,
+    MediumAndAbove,
+}
+
+impl SeverityFilter {
+    pub fn next(self) -> Self {
+        match self {
+            Self::All => Self::CriticalAndHigh,
+            Self::CriticalAndHigh => Self::MediumAndAbove,
+            Self::MediumAndAbove => Self::All,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::CriticalAndHigh => "High+",
+            Self::MediumAndAbove => "Med+",
+        }
+    }
+
+    pub fn matches(self, sev: Severity) -> bool {
+        match self {
+            Self::All => true,
+            Self::CriticalAndHigh => matches!(sev, Severity::Critical | Severity::High),
+            Self::MediumAndAbove => {
+                matches!(sev, Severity::Critical | Severity::High | Severity::Medium)
+            }
+        }
+    }
+}
+
+pub const MODULES: &[(&str, &str)] = &[
+    ("all", "Overview & All"),
+    ("project", "Project Intelligence"),
+    ("logs", "Log Intelligence"),
+    ("database", "Database Intelligence"),
+    ("queue", "Queue Intelligence"),
+    ("performance", "Performance Intelligence"),
+    ("security", "Security Intelligence"),
+    ("deployment", "Deployment Intelligence"),
+    ("migration", "Migration Intelligence"),
+    ("dependencies", "Dependency Intelligence"),
+    ("regression", "Regression Intelligence"),
+];
+
+pub struct TuiState {
+    pub data: ResponseEnvelope,
+    pub module_idx: usize,
+    pub selected_finding: usize,
+    pub search_mode: bool,
+    pub search_query: String,
+    pub severity_filter: SeverityFilter,
+    pub show_detail: bool,
+    pub show_help: bool,
+    pub status_banner: Option<String>,
+}
+
+impl TuiState {
+    pub fn new(data: ResponseEnvelope) -> Self {
+        Self {
+            data,
+            module_idx: 0,
+            selected_finding: 0,
+            search_mode: false,
+            search_query: String::new(),
+            severity_filter: SeverityFilter::All,
+            show_detail: false,
+            show_help: false,
+            status_banner: None,
+        }
+    }
+
+    pub fn filtered_findings(&self) -> Vec<&Finding> {
+        let active_module = MODULES[self.module_idx].0;
+        let query_lower = self.search_query.to_ascii_lowercase();
+
+        self.data
+            .findings
+            .iter()
+            .filter(|f| active_module == "all" || f.module == active_module)
+            .filter(|f| self.severity_filter.matches(f.severity))
+            .filter(|f| {
+                query_lower.is_empty()
+                    || f.title.to_ascii_lowercase().contains(&query_lower)
+                    || f.id.to_ascii_lowercase().contains(&query_lower)
+                    || f.affected_component
+                        .to_ascii_lowercase()
+                        .contains(&query_lower)
+            })
+            .collect()
+    }
+
+    pub fn move_down(&mut self) {
+        let len = self.filtered_findings().len();
+        if len > 0 {
+            self.selected_finding = (self.selected_finding + 1).min(len - 1);
+        }
+    }
+
+    pub fn move_up(&mut self) {
+        self.selected_finding = self.selected_finding.saturating_sub(1);
+    }
+
+    pub fn next_module(&mut self) {
+        self.module_idx = (self.module_idx + 1) % MODULES.len();
+        self.selected_finding = 0;
+    }
+
+    pub fn prev_module(&mut self) {
+        self.module_idx = if self.module_idx == 0 {
+            MODULES.len() - 1
+        } else {
+            self.module_idx - 1
+        };
+        self.selected_finding = 0;
+    }
+
+    pub fn count_for_module(&self, module_key: &str) -> usize {
+        if module_key == "all" {
+            self.data.findings.len()
+        } else {
+            self.data
+                .findings
+                .iter()
+                .filter(|f| f.module == module_key)
+                .count()
+        }
+    }
+}
+
+pub fn run_tui<F>(initial: ResponseEnvelope, mut refresh_fn: F) -> io::Result<()>
+where
+    F: FnMut() -> Option<ResponseEnvelope>,
+{
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        original_hook(info);
+    }));
+
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    let mut state = TuiState::new(initial);
+    let res = event_loop(&mut terminal, &mut state, &mut refresh_fn);
+
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+
+    res
+}
+
+fn event_loop<F>(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    state: &mut TuiState,
+    refresh_fn: &mut F,
+) -> io::Result<()>
+where
+    F: FnMut() -> Option<ResponseEnvelope>,
+{
+    loop {
+        terminal.draw(|f| draw_ui(f, state))?;
+
+        if event::poll(Duration::from_millis(200))? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+
+                if state.search_mode {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Enter => {
+                            state.search_mode = false;
+                        }
+                        KeyCode::Backspace => {
+                            state.search_query.pop();
+                            state.selected_finding = 0;
+                        }
+                        KeyCode::Char(c) => {
+                            state.search_query.push(c);
+                            state.selected_finding = 0;
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                match key.code {
+                    KeyCode::Char('q') => return Ok(()),
+                    KeyCode::Char('?') => state.show_help = !state.show_help,
+                    KeyCode::Esc => {
+                        if state.show_help {
+                            state.show_help = false;
+                        } else if state.show_detail {
+                            state.show_detail = false;
+                        } else if !state.search_query.is_empty() {
+                            state.search_query.clear();
+                            state.selected_finding = 0;
+                        }
+                    }
+                    KeyCode::Enter => {
+                        if !state.filtered_findings().is_empty() {
+                            state.show_detail = !state.show_detail;
+                        }
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => state.move_down(),
+                    KeyCode::Up | KeyCode::Char('k') => state.move_up(),
+                    KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => state.next_module(),
+                    KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => state.prev_module(),
+                    KeyCode::Char('/') => state.search_mode = true,
+                    KeyCode::Char('f') => {
+                        state.severity_filter = state.severity_filter.next();
+                        state.selected_finding = 0;
+                    }
+                    KeyCode::Char('r') => {
+                        if let Some(updated) = refresh_fn() {
+                            state.data = updated;
+                            state.selected_finding = 0;
+                            state.status_banner = Some("Diagnostics refreshed".to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+fn draw_ui(f: &mut Frame<'_>, state: &TuiState) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Header
+            Constraint::Length(4), // KPI Health Strip
+            Constraint::Min(10),   // Main Body
+            Constraint::Length(2), // Footer
+        ])
+        .split(f.area());
+
+    draw_header(f, chunks[0], state);
+    draw_kpi_strip(f, chunks[1], state);
+
+    let body = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(30), Constraint::Min(40)])
+        .split(chunks[2]);
+
+    draw_sidebar(f, body[0], state);
+    draw_findings_panel(f, body[1], state);
+    draw_footer(f, chunks[3], state);
+
+    if state.show_detail {
+        if let Some(finding) = state.filtered_findings().get(state.selected_finding).copied() {
+            draw_detail_modal(f, finding);
+        }
+    }
+
+    if state.show_help {
+        draw_help_modal(f);
+    }
+}
+
+fn draw_header(f: &mut Frame<'_>, area: Rect, state: &TuiState) {
+    let proj_name = state
+        .data
+        .project
+        .as_ref()
+        .map(|p| p.name.as_str())
+        .unwrap_or("Laravel Application");
+    let env_name = state
+        .data
+        .project
+        .as_ref()
+        .and_then(|p| p.environment.as_deref())
+        .unwrap_or("unknown");
+    let env_color = if env_name.eq_ignore_ascii_case("production") {
+        Color::LightRed
+    } else {
+        Color::LightGreen
+    };
+
+    let line = Line::from(vec![
+        Span::styled(
+            "  INCIDENTLENS ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            proj_name,
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("  |  Env: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            env_name.to_uppercase(),
+            Style::default().fg(env_color).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  |  v{}", state.data.engine_version),
+            Style::default().fg(Color::Cyan),
+        ),
+    ]);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Cyan));
+    f.render_widget(Paragraph::new(line).block(block), area);
+}
+
+fn draw_kpi_strip(f: &mut Frame<'_>, area: Rect, state: &TuiState) {
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+        ])
+        .split(area);
+
+    let s = &state.data.summary;
+    render_kpi_card(f, cols[0], "ERRORS", s.errors, Color::LightRed);
+    render_kpi_card(f, cols[1], "WARNINGS", s.warnings, Color::Yellow);
+    render_kpi_card(f, cols[2], "PERFORMANCE", s.performance, Color::Magenta);
+    render_kpi_card(f, cols[3], "SECURITY", s.security, Color::LightCyan);
+    render_kpi_card(
+        f,
+        cols[4],
+        "INCIDENTS",
+        state.data.incidents.len(),
+        Color::LightYellow,
+    );
+}
+
+fn render_kpi_card(f: &mut Frame<'_>, area: Rect, label: &str, count: usize, color: Color) {
+    let block = Block::default()
+        .title(Span::styled(
+            format!(" {label} "),
+            Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(color));
+
+    let text = Paragraph::new(Line::from(Span::styled(
+        format!(" {count}"),
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
+    )))
+    .block(block);
+    f.render_widget(text, area);
+}
+
+fn draw_sidebar(f: &mut Frame<'_>, area: Rect, state: &TuiState) {
+    let items: Vec<ListItem<'_>> = MODULES
+        .iter()
+        .enumerate()
+        .map(|(idx, (key, label))| {
+            let count = state.count_for_module(key);
+            let style = if idx == state.module_idx {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            ListItem::new(Line::from(vec![
+                Span::styled(format!(" {:<21}", label), style),
+                Span::styled(
+                    format!("{:>4} ", count),
+                    if idx == state.module_idx {
+                        style
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    },
+                ),
+            ]))
+        })
+        .collect();
+
+    let mut list_state = ListState::default();
+    list_state.select(Some(state.module_idx));
+
+    let list = List::new(items).block(
+        Block::default()
+            .title(" Diagnostic Modules ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Blue)),
+    );
+    f.render_stateful_widget(list, area, &mut list_state);
+}
+
+fn draw_findings_panel(f: &mut Frame<'_>, area: Rect, state: &TuiState) {
+    let filtered = state.filtered_findings();
+    let title = format!(
+        " {} ({}) | Filter: {} {} ",
+        MODULES[state.module_idx].1,
+        filtered.len(),
+        state.severity_filter.label(),
+        if state.search_query.is_empty() {
+            String::new()
+        } else {
+            format!("| Search: \"{}\"", state.search_query)
+        }
+    );
+
+    let block = Block::default()
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(Color::LightCyan)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    if filtered.is_empty() {
+        let msg = if !state.data.incidents.is_empty() && state.module_idx == 0 {
+            render_incidents_summary(&state.data.incidents)
+        } else {
+            "No findings match the current module and filter.".to_string()
+        };
+        f.render_widget(
+            Paragraph::new(msg)
+                .style(Style::default().fg(Color::Green))
+                .block(block)
+                .wrap(Wrap { trim: true }),
+            area,
+        );
+        return;
+    }
+
+    let items: Vec<ListItem<'_>> = filtered
+        .iter()
+        .map(|finding| {
+            let (sev_label, sev_color) = severity_badge(finding.severity);
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!(" {sev_label} "),
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(sev_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    format!("[{}] ", finding.id),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(
+                    finding.title.clone(),
+                    Style::default().fg(Color::White),
+                ),
+            ]))
+        })
+        .collect();
+
+    let mut list_state = ListState::default();
+    list_state.select(Some(state.selected_finding));
+
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        );
+    f.render_stateful_widget(list, area, &mut list_state);
+}
+
+fn render_incidents_summary(incidents: &[Incident]) -> String {
+    let mut out = String::from("Correlated Incidents:\n");
+    for inc in incidents {
+        out.push_str(&format!("- [{}] {}: {}\n", inc.id, inc.title, inc.possible_root_cause));
+    }
+    out
+}
+
+fn draw_footer(f: &mut Frame<'_>, area: Rect, state: &TuiState) {
+    let text = if state.search_mode {
+        format!(" Search: {}_  (Enter/Esc to finish)", state.search_query)
+    } else if let Some(ref banner) = state.status_banner {
+        format!(" {banner}  |  [q] Quit  [?] Help")
+    } else {
+        " [↑/↓] Navigate  [Tab/←/→] Module  [Enter] Inspect  [/] Search  [f] Filter  [r] Refresh  [?] Help  [q] Quit".to_string()
+    };
+
+    f.render_widget(
+        Paragraph::new(text).style(Style::default().fg(Color::Cyan)),
+        area,
+    );
+}
+
+fn draw_detail_modal(f: &mut Frame<'_>, finding: &Finding) {
+    let area = centered_rect(76, 70, f.area());
+    f.render_widget(Clear, area);
+
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("ID: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(&finding.id, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw("  |  Module: "),
+            Span::styled(&finding.module, Style::default().fg(Color::Yellow)),
+            Span::raw("  |  Confidence: "),
+            Span::styled(format!("{:?}", finding.confidence), Style::default().fg(Color::Green)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            &finding.title,
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(vec![
+            Span::styled("Component: ", Style::default().fg(Color::DarkGray)),
+            Span::raw(&finding.affected_component),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled("Evidence:", Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD))),
+    ];
+
+    for ev in &finding.evidence {
+        lines.push(Line::from(format!("  • [{:?}] ({}) {}", ev.kind, ev.source, ev.detail)));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Recommended Next Step:",
+        Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(format!("  {}", finding.next_step)));
+
+    let modal = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(" Finding Inspector (Esc to close) ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::LightCyan)),
+        )
+        .wrap(Wrap { trim: true });
+    f.render_widget(modal, area);
+}
+
+fn draw_help_modal(f: &mut Frame<'_>) {
+    let area = centered_rect(55, 50, f.area());
+    f.render_widget(Clear, area);
+
+    let help_text = "\
+  Keyboard Shortcuts:
+    ↑ / ↓ / j / k   Navigate findings
+    Tab / ← / →     Switch diagnostic module
+    Enter           Open finding evidence inspector
+    /               Search findings
+    f               Cycle severity filter (All / High+ / Med+)
+    r               Refresh diagnostics
+    Esc             Close modal or clear search
+    q               Quit IncidentLens";
+
+    let modal = Paragraph::new(help_text).block(
+        Block::default()
+            .title(" Help (Esc or ? to close) ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Yellow)),
+    );
+    f.render_widget(modal, area);
+}
+
+fn severity_badge(sev: Severity) -> (&'static str, Color) {
+    match sev {
+        Severity::Critical => ("CRIT", Color::Red),
+        Severity::High => ("HIGH", Color::LightRed),
+        Severity::Medium => ("MED ", Color::Yellow),
+        Severity::Low => ("LOW ", Color::Blue),
+        Severity::Info => ("INFO", Color::Gray),
+    }
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incidentlens_core::{Confidence, Finding};
+
+    #[test]
+    fn tui_state_filters_by_module_severity_and_search() {
+        let resp = ResponseEnvelope::ok(
+            None,
+            vec![
+                Finding {
+                    id: "LOG-001".into(),
+                    module: "logs".into(),
+                    title: "SQLSTATE deadlock".into(),
+                    severity: Severity::High,
+                    confidence: Confidence::High,
+                    affected_component: "OrderService".into(),
+                    evidence: vec![],
+                    first_observed: None,
+                    last_observed: None,
+                    next_step: "Check query".into(),
+                },
+                Finding {
+                    id: "PRJ-004".into(),
+                    module: "project".into(),
+                    title: "Missing composer.lock".into(),
+                    severity: Severity::Low,
+                    confidence: Confidence::High,
+                    affected_component: "composer.lock".into(),
+                    evidence: vec![],
+                    first_observed: None,
+                    last_observed: None,
+                    next_step: "Run composer install".into(),
+                },
+            ],
+        );
+
+        let mut state = TuiState::new(resp);
+        assert_eq!(state.filtered_findings().len(), 2);
+
+        state.severity_filter = SeverityFilter::CriticalAndHigh;
+        assert_eq!(state.filtered_findings().len(), 1);
+        assert_eq!(state.filtered_findings()[0].id, "LOG-001");
+
+        state.severity_filter = SeverityFilter::All;
+        state.search_query = "composer".into();
+        assert_eq!(state.filtered_findings().len(), 1);
+        assert_eq!(state.filtered_findings()[0].id, "PRJ-004");
+    }
+}

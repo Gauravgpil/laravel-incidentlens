@@ -1,0 +1,10 @@
+[package]
+name = "incidentlens-reporter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "JSON, Markdown, HTML, and styled CLI report formatters"
+
+[dependencies]
+incidentlens-core = { path = "../incidentlens-core" }
+owo-colors.workspace = true

@@ -1,0 +1,11 @@
+[package]
+name = "incidentlens-correlator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cross-module incident correlation and regression engine"
+
+[dependencies]
+incidentlens-core = { path = "../incidentlens-core" }
+incidentlens-parser = { path = "../incidentlens-parser" }
+serde.workspace = true

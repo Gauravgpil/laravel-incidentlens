@@ -1,0 +1,11 @@
+[package]
+name = "incidentlens-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Interactive enterprise Ratatui terminal UI for Laravel IncidentLens"
+
+[dependencies]
+crossterm.workspace = true
+incidentlens-core = { path = "../incidentlens-core" }
+ratatui.workspace = true

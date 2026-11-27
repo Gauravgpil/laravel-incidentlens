@@ -3,16 +3,23 @@ name = "incidentlens-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "CLI executable for Laravel IncidentLens"
+description = "CLI and interactive TUI executable for Laravel IncidentLens"
 
 [[bin]]
 name = "incidentlens"
 path = "src/main.rs"
 
 [dependencies]
+chrono.workspace = true
 clap.workspace = true
+crossterm.workspace = true
 incidentlens-analyzer = { path = "../incidentlens-analyzer" }
 incidentlens-core = { path = "../incidentlens-core" }
+incidentlens-correlator = { path = "../incidentlens-correlator" }
+incidentlens-parser = { path = "../incidentlens-parser" }
+incidentlens-reporter = { path = "../incidentlens-reporter" }
+incidentlens-storage = { path = "../incidentlens-storage" }
+incidentlens-tui = { path = "../incidentlens-tui" }
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

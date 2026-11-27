@@ -2,7 +2,12 @@
 resolver = "2"
 members = [
     "crates/incidentlens-core",
+    "crates/incidentlens-parser",
     "crates/incidentlens-analyzer",
+    "crates/incidentlens-correlator",
+    "crates/incidentlens-storage",
+    "crates/incidentlens-reporter",
+    "crates/incidentlens-tui",
     "crates/incidentlens-cli",
 ]
 
@@ -18,6 +23,14 @@ thiserror = "2.0"
 clap = { version = "4.5", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rayon = "1.10"
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1.11"
+sha2 = "0.10"
+ratatui = "0.29"
+crossterm = "0.28"
+owo-colors = "4.1"
+criterion = "0.5"
 tempfile = "3.14"
 assert_cmd = "2.0"
 predicates = "3.1"

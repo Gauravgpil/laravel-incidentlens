@@ -1,0 +1,16 @@
+[package]
+name = "incidentlens-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Diagnostic snapshot persistence and Git/snapshot diffing"
+
+[dependencies]
+chrono.workspace = true
+incidentlens-core = { path = "../incidentlens-core" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

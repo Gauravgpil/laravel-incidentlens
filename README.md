@@ -1,61 +1,63 @@
 # Laravel IncidentLens
 
-**Laravel IncidentLens** (`gaurav/laravel-incidentlens`) is an offline-first, read-only-by-default diagnostic tool for Laravel applications, powered by a Rust diagnostic engine and a lightweight Laravel Composer package.
-
-> **Status**: Phase 1 (Foundation) — Project detection, PHP-to-Rust protocol `v1.0`, CLI diagnostics (`status`, `scan`, `doctor`, `version`, `protocol`), and Laravel Artisan integration.
+**Laravel IncidentLens** (`gaurav/laravel-incidentlens`) is an offline-first, read-only-by-default, Rust-powered diagnostic engine and interactive Ratatui TUI for Laravel applications.
 
 ---
 
-## Architecture
+## Capabilities
 
-- **Laravel Package (`packages/laravel`)**: Lightweight project metadata inspection (with secret redaction), binary discovery, protocol handshaking, and Artisan commands (`incidentlens:doctor`, `incidentlens:status`, `incidentlens:scan`).
-- **Rust Diagnostic Engine (`crates/`)**:
-  - `incidentlens-core`: Protocol `v1.0` schemas, exit codes, secret redaction, path validation.
-  - `incidentlens-analyzer`: Project structure and configuration diagnostics.
-  - `incidentlens-cli`: `incidentlens` CLI executable.
-
-See [docs/architecture.md](docs/architecture.md) and [docs/protocol.md](docs/protocol.md) for details.
+- **Interactive Enterprise TUI (`incidentlens`)**: Ratatui + Crossterm terminal dashboard with 10 diagnostic modules, KPI health strip, severity filters, live search (`/`), evidence inspector modal (`Enter`), and CI/non-TTY fallback.
+- **Log Intelligence**: Streaming Monolog/daily/JSONL parser, multiline stack traces, exception normalization, stable SHA-256 fingerprinting, and duplicate grouping.
+- **Database & Queue Intelligence**: Optional, disabled-by-default Laravel runtime collectors (`QueryExecuted`, `JobProcessing`, `JobProcessed`, `JobFailed`, `RequestHandled`) with SQL literal normalization (no bindings collected by default), slow query & observed N+1 detection.
+- **Performance & Incident Correlation**: P50/P95/P99 latency metrics and cross-module correlation engine linking slow requests, repeated query fingerprints, log errors, and queue failures with evidence-backed confidence.
+- **Deployment & Regression Intelligence**: Diagnostic snapshots (`incidentlens snapshot`) and diffing (`incidentlens compare`).
+- **Security, Migration & Dependency Intelligence**: Read-only `.env`/webroot checks, static migration risk detection (`dropIfExists`, `dropColumn`, missing `down()`), and Composer manifest constraint checks.
+- **Multi-Format Reporting**: Colorful ANSI terminal output, JSON (`--format=json`), Markdown (`--format=markdown`), and styled HTML (`--format=html`).
 
 ---
 
-## Quick Start (Development)
-
-### Build the Rust Engine
+## Commands
 
 ```bash
-cargo build --release
+incidentlens                                  # Launch interactive TUI (or plain status in CI)
+incidentlens scan --ci --format=json          # Full diagnostic scan for CI
+incidentlens logs --level=error --since=24h   # Filter and group log exceptions
+incidentlens database --slow-ms=500           # Analyze query fingerprints & N+1 patterns
+incidentlens queue                            # Analyze queue job failures
+incidentlens performance --slow-ms=1000       # Endpoint P50/P95/P99 analysis
+incidentlens security                         # Read-only security checks
+incidentlens migration                        # Static migration risk scan
+incidentlens dependencies                     # Composer constraint checks
+incidentlens snapshot pre-deploy              # Save diagnostic snapshot
+incidentlens compare pre-deploy post-deploy   # Compare snapshots for regressions
+incidentlens report --format=html -o out.html # Generate HTML/Markdown/JSON report
+incidentlens doctor                           # Verify engine & Laravel project readiness
 ```
 
-### Run PHP Package Tests
+Laravel Artisan commands:
 
 ```bash
+php artisan incidentlens:doctor
+php artisan incidentlens:status
+php artisan incidentlens:scan --ci
+```
+
+---
+
+## Development & Testing
+
+```bash
+# Rust workspace tests & benchmarks
+cargo test --workspace
+cargo bench -p incidentlens-parser
+
+# Laravel package tests (PHPUnit + Orchestra Testbench)
 cd packages/laravel
 composer install
 composer test
 ```
 
-### CLI Usage
-
-```bash
-incidentlens status --project /path/to/laravel-app
-incidentlens scan --project /path/to/laravel-app --format=json
-incidentlens doctor --project /path/to/laravel-app
-incidentlens protocol
-```
-
----
-
-## Exit Codes
-
-| Code | Meaning |
-| :--- | :--- |
-| `0` | Success; no CI threshold-breaking findings |
-| `1` | Findings exceeded CI thresholds (`--ci`) |
-| `2` | Invalid arguments or malformed protocol input |
-| `3` | Internal engine error |
-| `4` | Unsupported or incompatible project / protocol version |
-
----
+See [docs/architecture.md](docs/architecture.md), [docs/protocol.md](docs/protocol.md), [docs/compatibility-and-risks.md](docs/compatibility-and-risks.md), and [docs/testing-strategy.md](docs/testing-strategy.md).
 
 ## License
 
