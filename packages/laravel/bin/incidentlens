@@ -24,6 +24,7 @@ $isNativeBinary = static function (string $path) use ($selfReal): bool {
 
 $candidates = array_filter([
     getenv('INCIDENTLENS_BINARY') ?: null,
+    $projectRoot . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'incidentlens-engine' . (DIRECTORY_SEPARATOR === '\\' ? '.exe' : ''),
     $projectRoot . DIRECTORY_SEPARATOR . 'target' . DIRECTORY_SEPARATOR . 'release' . DIRECTORY_SEPARATOR . $binName,
     $projectRoot . DIRECTORY_SEPARATOR . 'target' . DIRECTORY_SEPARATOR . 'debug' . DIRECTORY_SEPARATOR . $binName,
     __DIR__ . DIRECTORY_SEPARATOR . 'incidentlens-engine' . (DIRECTORY_SEPARATOR === '\\' ? '.exe' : ''),
