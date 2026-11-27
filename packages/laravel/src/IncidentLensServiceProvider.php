@@ -8,6 +8,7 @@ use Gaurav\IncidentLens\Collectors\RuntimeCollector;
 use Gaurav\IncidentLens\Commands\AuditCommand;
 use Gaurav\IncidentLens\Commands\DoctorCommand;
 use Gaurav\IncidentLens\Commands\ScanCommand;
+use Gaurav\IncidentLens\Commands\SecurityAuditCommand;
 use Gaurav\IncidentLens\Commands\StatusCommand;
 use Gaurav\IncidentLens\Engine\EngineClient;
 use Gaurav\IncidentLens\Support\ProjectInspector;
@@ -61,6 +62,7 @@ final class IncidentLensServiceProvider extends ServiceProvider
             $this->commands([
                 AuditCommand::class,
                 DoctorCommand::class,
+                SecurityAuditCommand::class,
                 StatusCommand::class,
                 ScanCommand::class,
             ]);

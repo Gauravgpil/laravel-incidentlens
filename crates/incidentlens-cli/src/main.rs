@@ -112,8 +112,12 @@ enum Commands {
         #[arg(long, default_value_t = 1000.0)]
         slow_ms: f64,
     },
-    /// Run read-only Laravel security configuration diagnostics
-    Security,
+    /// Run read-only Laravel security configuration and vulnerability diagnostics
+    Security {
+        /// Security scan scope (all, secrets, ai, git, auth, vulnerabilities, storage, webhooks, leaks)
+        #[arg(long, default_value = "all")]
+        scope: String,
+    },
     /// Inspect database migrations for destructive operations and rollback gaps
     Migration,
     /// Inspect Composer dependency constraints and manifest metadata
@@ -253,7 +257,7 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ExitCode, Box<dyn std::error::
         Some(Commands::Database { slow_ms }) => run_filtered_scan(cli, format, Some("database"), *slow_ms, 1000.0),
         Some(Commands::Queue) => run_filtered_scan(cli, format, Some("queue"), 500.0, 1000.0),
         Some(Commands::Performance { slow_ms }) => run_filtered_scan(cli, format, Some("performance"), 500.0, *slow_ms),
-        Some(Commands::Security) => run_filtered_scan(cli, format, Some("security"), 500.0, 1000.0),
+        Some(Commands::Security { scope }) => run_module_security(cli, format, scope),
         Some(Commands::Migration) => run_filtered_scan(cli, format, Some("migration"), 500.0, 1000.0),
         Some(Commands::Dependencies) => run_filtered_scan(cli, format, Some("dependencies"), 500.0, 1000.0),
         Some(Commands::Code) => run_filtered_scan(cli, format, Some("code"), 500.0, 1000.0),
@@ -665,6 +669,23 @@ fn run_logs_follow(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
             pos = len;
         }
+    }
+}
+
+fn run_module_security(
+    cli: &Cli,
+    format: OutputFormat,
+    scope: &str,
+) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    let project_path = resolve_project_path(cli)?;
+    match ProjectAnalyzer::analyze(&project_path, None) {
+        Ok(proj) => {
+            let findings = SecurityAnalyzer::analyze_scoped(&project_path, &proj.report, scope);
+            let resp = ResponseEnvelope::ok(Some(proj.report), findings);
+            emit_response(cli, format, &resp)?;
+            Ok(ExitCode::Success)
+        }
+        Err(err) => Ok(handle_analyzer_error(err, format)),
     }
 }
 
