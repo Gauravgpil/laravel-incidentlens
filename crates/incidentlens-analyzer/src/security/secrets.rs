@@ -195,22 +195,29 @@ pub fn scan_secrets_and_ai_keys(project_root: &Path, report: &ProjectReport) -> 
                 }
 
                 if is_frontend && fe_env_re.is_match(line) {
-                    findings.push(Finding {
-                        id: format!("SEC-FE-ENV-{}", findings.len() + 1),
-                        module: "security".to_string(),
-                        title: format!("Client-exposed secret env variable in {rel}:{line_no}"),
-                        severity: Severity::High,
-                        confidence: Confidence::Medium,
-                        affected_component: format!("{rel}:{line_no}"),
-                        evidence: vec![Evidence {
-                            kind: EvidenceKind::Observed,
-                            source: "security_ai".to_string(),
-                            detail: "VITE_*/NEXT_PUBLIC_* secret/AI key reference is bundled into public browser JS.".to_string(),
-                        }],
-                        first_observed: None,
-                        last_observed: None,
-                        next_step: "Proxy AI/API calls through a Laravel backend controller instead of exposing keys in Vite env vars.".to_string(),
-                    });
+                    let is_public_client_key = line.contains("VITE_PUSHER_APP_KEY")
+                        || line.contains("VITE_REVERB_APP_KEY")
+                        || line.contains("VITE_STRIPE_KEY")
+                        || line.contains("VITE_STRIPE_PUBLIC_KEY")
+                        || line.contains("VITE_ABLY_PUBLIC_KEY");
+                    if !is_public_client_key {
+                        findings.push(Finding {
+                            id: format!("SEC-FE-ENV-{}", findings.len() + 1),
+                            module: "security".to_string(),
+                            title: format!("Client-exposed secret env variable in {rel}:{line_no}"),
+                            severity: Severity::High,
+                            confidence: Confidence::Medium,
+                            affected_component: format!("{rel}:{line_no}"),
+                            evidence: vec![Evidence {
+                                kind: EvidenceKind::Observed,
+                                source: "security_ai".to_string(),
+                                detail: "VITE_*/NEXT_PUBLIC_* secret/AI key reference is bundled into public browser JS.".to_string(),
+                            }],
+                            first_observed: None,
+                            last_observed: None,
+                            next_step: "Proxy AI/API calls through a Laravel backend controller instead of exposing keys in Vite env vars.".to_string(),
+                        });
+                    }
                 }
 
                 if inertia_re.is_match(line) {

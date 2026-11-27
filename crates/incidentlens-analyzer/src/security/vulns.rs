@@ -58,7 +58,10 @@ pub fn scan_vulnerabilities_uploads_and_webhooks(project_root: &Path) -> Vec<Fin
                         next_step: "Use parameter bindings (`whereRaw('col = ?', [$val])`).".to_string(),
                     });
                 }
-                if exec_re.is_match(line) {
+                if exec_re.is_match(line)
+                    && !line.contains("escapeshellarg")
+                    && !line.contains("escapeshellcmd")
+                {
                     findings.push(Finding {
                         id: format!("SEC-EXEC-{}", findings.len() + 1),
                         module: "security".to_string(),
@@ -131,6 +134,15 @@ pub fn scan_vulnerabilities_uploads_and_webhooks(project_root: &Path) -> Vec<Fin
             .to_string();
         for (idx, line) in content.lines().enumerate() {
             if xss_re.is_match(line) {
+                let is_safe_blade = line.contains("$slot")
+                    || line.contains("nl2br(e(")
+                    || line.contains("e($")
+                    || line.contains("Js::from")
+                    || line.contains("json_encode(")
+                    || line.contains("strip_tags(");
+                if is_safe_blade {
+                    continue;
+                }
                 findings.push(Finding {
                     id: format!("SEC-XSS-{}", findings.len() + 1),
                     module: "security".to_string(),

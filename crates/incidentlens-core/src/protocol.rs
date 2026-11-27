@@ -114,19 +114,19 @@ impl ResponseEnvelope {
             match f.severity {
                 Severity::Critical => {
                     summary.errors += 1;
-                    penalty += 25;
+                    penalty += 15;
                 }
                 Severity::High => {
                     summary.errors += 1;
-                    penalty += 15;
+                    penalty += 8;
                 }
                 Severity::Medium => {
                     summary.warnings += 1;
-                    penalty += 7;
+                    penalty += 3;
                 }
                 Severity::Low => {
                     summary.warnings += 1;
-                    penalty += 3;
+                    penalty += 1;
                 }
                 Severity::Info => {}
             }
