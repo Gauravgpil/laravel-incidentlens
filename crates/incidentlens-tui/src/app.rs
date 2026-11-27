@@ -84,8 +84,25 @@ pub struct TuiState {
     pub severity_filter: SeverityFilter,
     pub show_detail: bool,
     pub show_help: bool,
+    pub show_palette: bool,
+    pub palette_idx: usize,
     pub status_banner: Option<String>,
 }
+
+const PALETTE_ITEMS: &[(&str, &str)] = &[
+    ("all", "Overview & All Modules"),
+    ("security", "Security: Secrets, AI Keys, SQLi, XSS, IDOR"),
+    ("database", "Database & N+1 Query Intelligence"),
+    ("logs", "Log Intelligence & Stack Traces"),
+    ("performance", "Performance (P50/P95/P99 & Cache)"),
+    ("code", "Code Quality (Routes, Controllers, Models)"),
+    ("architecture", "Architecture & Circular Dependencies"),
+    ("resources", "Memory & Disk Resources"),
+    ("scalability", "Horizontal Scalability & Infra"),
+    ("frontend", "Frontend & Vite/React/Inertia Assets"),
+    ("migration", "Database Migration Risks"),
+    ("refresh", "Refresh Diagnostics Now"),
+];
 
 impl TuiState {
     pub fn new(data: ResponseEnvelope) -> Self {
@@ -98,6 +115,8 @@ impl TuiState {
             severity_filter: SeverityFilter::All,
             show_detail: false,
             show_help: false,
+            show_palette: false,
+            palette_idx: 0,
             status_banner: None,
         }
     }
@@ -227,8 +246,37 @@ where
                     continue;
                 }
 
+                if state.show_palette {
+                    match key.code {
+                        KeyCode::Esc | KeyCode::Char('c') => state.show_palette = false,
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            state.palette_idx = (state.palette_idx + 1).min(PALETTE_ITEMS.len() - 1);
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            state.palette_idx = state.palette_idx.saturating_sub(1);
+                        }
+                        KeyCode::Enter => {
+                            let (key_name, label) = PALETTE_ITEMS[state.palette_idx];
+                            state.show_palette = false;
+                            if key_name == "refresh" {
+                                if let Some(updated) = refresh_fn() {
+                                    state.data = updated;
+                                    state.selected_finding = 0;
+                                    state.status_banner = Some("Diagnostics refreshed".to_string());
+                                }
+                            } else if let Some(pos) = MODULES.iter().position(|(k, _)| *k == key_name) {
+                                state.jump_module(pos);
+                                state.status_banner = Some(format!("Switched to {label}"));
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 match key.code {
                     KeyCode::Char('q') => return Ok(()),
+                    KeyCode::Char('c') => state.show_palette = !state.show_palette,
                     KeyCode::Char('?') => state.show_help = !state.show_help,
                     KeyCode::Esc => {
                         if state.show_help {
@@ -314,6 +362,10 @@ fn draw_ui(f: &mut Frame<'_>, state: &TuiState) {
 
     if state.show_help {
         draw_help_modal(f);
+    }
+
+    if state.show_palette {
+        draw_palette_modal(f, state);
     }
 }
 
@@ -712,7 +764,7 @@ fn draw_footer(f: &mut Frame<'_>, area: Rect, state: &TuiState) {
     } else if let Some(ref banner) = state.status_banner {
         format!(" {banner}  |  [q] Quit  [?] Help")
     } else {
-        " [↑/↓] Navigate  [Tab/0-9] Module  [Enter] Modal  [/] Search  [f] Filter  [r] Refresh  [?] Help  [q] Quit".to_string()
+        " [↑/↓] Nav  [Tab/0-9] Module  [c] Command Palette  [Enter] Modal  [/] Search  [f] Filter  [r] Refresh  [?] Help  [q] Quit".to_string()
     };
 
     f.render_widget(
@@ -761,6 +813,39 @@ fn draw_help_modal(f: &mut Frame<'_>) {
             .border_style(Style::default().fg(Color::Yellow)),
     );
     f.render_widget(modal, area);
+}
+
+fn draw_palette_modal(f: &mut Frame<'_>, state: &TuiState) {
+    let area = centered_rect(64, 62, f.area());
+    f.render_widget(Clear, area);
+
+    let items: Vec<ListItem<'_>> = PALETTE_ITEMS
+        .iter()
+        .enumerate()
+        .map(|(i, (_, label))| {
+            let style = if i == state.palette_idx {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            ListItem::new(Line::from(Span::styled(format!("  {label}  "), style)))
+        })
+        .collect();
+
+    let mut list_state = ListState::default();
+    list_state.select(Some(state.palette_idx));
+
+    let list = List::new(items).block(
+        Block::default()
+            .title(" Command Palette (↑/↓ + Enter to run, Esc to close) ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::LightCyan)),
+    );
+    f.render_stateful_widget(list, area, &mut list_state);
 }
 
 fn severity_badge(sev: Severity) -> (&'static str, Color) {
