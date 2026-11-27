@@ -314,3 +314,26 @@ fn escape_html(s: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
 }
+
+pub fn render_csv(resp: &ResponseEnvelope) -> String {
+    let mut out = String::from("id,module,severity,confidence,title,affected_component,next_step\n");
+    for f in &resp.findings {
+        let _ = writeln!(
+            out,
+            "{},{},{:?},{:?},{},{},{}",
+            csv_cell(&f.id),
+            csv_cell(&f.module),
+            f.severity,
+            f.confidence,
+            csv_cell(&f.title),
+            csv_cell(&f.affected_component),
+            csv_cell(&f.next_step),
+        );
+    }
+    out
+}
+
+fn csv_cell(s: &str) -> String {
+    let escaped = s.replace('"', "\"\"");
+    format!("\"{escaped}\"")
+}

@@ -92,3 +92,34 @@ fn non_laravel_project_exits_with_code_4() {
         .assert()
         .code(4);
 }
+
+#[test]
+fn preflight_incident_code_and_csv_export_work() {
+    let fixture = setup_laravel_fixture("APP_ENV=production\nAPP_DEBUG=true\nAPP_KEY=base64:secret123\n");
+
+    Command::cargo_bin("incidentlens")
+        .unwrap()
+        .args(["preflight", "--project"])
+        .arg(fixture.path())
+        .args(["--ci"])
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("BLOCKED"));
+
+    Command::cargo_bin("incidentlens")
+        .unwrap()
+        .args(["incident", "--project"])
+        .arg(fixture.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("INCIDENT INVESTIGATION MODE"));
+
+    Command::cargo_bin("incidentlens")
+        .unwrap()
+        .args(["scan", "--project"])
+        .arg(fixture.path())
+        .args(["--format=csv"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("id,module,severity,confidence,title"));
+}

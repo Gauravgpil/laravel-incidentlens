@@ -21,16 +21,22 @@
 ```bash
 incidentlens                                  # Launch interactive TUI (or plain status in CI)
 incidentlens scan --ci --format=json          # Full diagnostic scan for CI
-incidentlens logs --level=error --since=24h   # Filter and group log exceptions
+incidentlens preflight --ci                   # Pre-deployment readiness check ([PASS]/[WARN]/[FAIL])
+incidentlens incident                         # Production incident timeline & correlation mode
+incidentlens logs --level=error --follow      # Filter, group, or tail log exceptions
+incidentlens code                             # Static code intelligence (routes, controllers, models, exceptions)
 incidentlens database --slow-ms=500           # Analyze query fingerprints & N+1 patterns
+incidentlens api                              # API routes, 5xx error rates, latency & throttle checks
 incidentlens queue                            # Analyze queue job failures
-incidentlens performance --slow-ms=1000       # Endpoint P50/P95/P99 analysis
+incidentlens cache                            # Cache driver & hit/miss ratio diagnostics
+incidentlens scheduler                        # Scheduled task overlap protection checks
+incidentlens performance --slow-ms=1000       # Endpoint P50/P95/P99 & external HTTP analysis
 incidentlens security                         # Read-only security checks
 incidentlens migration                        # Static migration risk scan
 incidentlens dependencies                     # Composer constraint checks
 incidentlens snapshot pre-deploy              # Save diagnostic snapshot
 incidentlens compare pre-deploy post-deploy   # Compare snapshots for regressions
-incidentlens report --format=html -o out.html # Generate HTML/Markdown/JSON report
+incidentlens report --format=html -o out.html # Export HTML/Markdown/JSON/CSV report
 incidentlens doctor                           # Verify engine & Laravel project readiness
 ```
 

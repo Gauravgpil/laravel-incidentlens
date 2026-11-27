@@ -2,8 +2,9 @@ use chrono::{Duration as ChronoDuration, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use crossterm::tty::IsTty;
 use incidentlens_analyzer::{
-    AnalyzerError, DatabaseAnalyzer, DependencyAnalyzer, LogAnalyzer, MigrationAnalyzer,
-    PerformanceAnalyzer, ProjectAnalyzer, QueueAnalyzer, SecurityAnalyzer,
+    AnalyzerError, ApiAnalyzer, CacheAnalyzer, CheckStatus, CodeAnalyzer, DatabaseAnalyzer,
+    DependencyAnalyzer, GitCorrelator, LogAnalyzer, MigrationAnalyzer, PerformanceAnalyzer,
+    PreflightScanner, ProjectAnalyzer, QueueAnalyzer, SchedulerAnalyzer, SecurityAnalyzer,
 };
 use incidentlens_core::{
     is_protocol_compatible, CoreError, ExitCode, ProjectMetadata, ProtocolInfo, RequestEnvelope,
@@ -12,7 +13,7 @@ use incidentlens_core::{
 use incidentlens_correlator::engine::CorrelationInput;
 use incidentlens_correlator::CorrelationEngine;
 use incidentlens_parser::{parse_runtime_jsonl, LogFilter, LogLevel};
-use incidentlens_reporter::{render_html, render_markdown, render_terminal_report};
+use incidentlens_reporter::{render_csv, render_html, render_markdown, render_terminal_report};
 use incidentlens_storage::{compare_snapshots, load_snapshot, save_snapshot};
 use incidentlens_tui::run_tui;
 use std::fs;
@@ -26,6 +27,7 @@ enum OutputFormat {
     Json,
     Markdown,
     Html,
+    Csv,
 }
 
 #[derive(Debug, Parser)]
@@ -114,6 +116,25 @@ enum Commands {
     Migration,
     /// Inspect Composer dependency constraints and manifest metadata
     Dependencies,
+    /// Static Laravel codebase intelligence (routes, controllers, models, exceptions)
+    Code,
+    /// Analyze API routes, latency, error rates, and rate-limiting
+    Api {
+        #[arg(long, default_value_t = 1000.0)]
+        slow_ms: f64,
+    },
+    /// Analyze cache drivers and hit/miss telemetry
+    Cache,
+    /// Inspect Laravel scheduled tasks for overlap protection risks
+    Scheduler,
+    /// Pre-deployment readiness scanner ([PASS]/[WARN]/[FAIL])
+    Preflight {
+        /// Exit with code 1 if preflight is BLOCKED
+        #[arg(long)]
+        ci: bool,
+    },
+    /// Production incident investigation timeline and correlation report
+    Incident,
     /// Save a diagnostic snapshot for future comparison
     Snapshot {
         /// Snapshot identifier (e.g. pre-deploy)
@@ -218,6 +239,12 @@ fn run(cli: &Cli, format: OutputFormat) -> Result<ExitCode, Box<dyn std::error::
         Some(Commands::Security) => run_filtered_scan(cli, format, Some("security"), 500.0, 1000.0),
         Some(Commands::Migration) => run_filtered_scan(cli, format, Some("migration"), 500.0, 1000.0),
         Some(Commands::Dependencies) => run_filtered_scan(cli, format, Some("dependencies"), 500.0, 1000.0),
+        Some(Commands::Code) => run_filtered_scan(cli, format, Some("code"), 500.0, 1000.0),
+        Some(Commands::Api { slow_ms }) => run_filtered_scan(cli, format, Some("api"), 500.0, *slow_ms),
+        Some(Commands::Cache) => run_filtered_scan(cli, format, Some("cache"), 500.0, 1000.0),
+        Some(Commands::Scheduler) => run_filtered_scan(cli, format, Some("scheduler"), 500.0, 1000.0),
+        Some(Commands::Preflight { ci }) => run_preflight(cli, format, *ci),
+        Some(Commands::Incident) => run_incident(cli, format),
         Some(Commands::Snapshot { name }) => run_snapshot(cli, format, name),
         Some(Commands::Compare { baseline, current }) => run_compare(cli, format, baseline, current),
         Some(Commands::Report) => run_scan(cli, format, false, false),
@@ -256,16 +283,27 @@ fn build_full_response(
     let sec_findings = SecurityAnalyzer::analyze(project_path, &project_analysis.report);
     let mig_findings = MigrationAnalyzer::analyze(project_path);
     let dep_findings = DependencyAnalyzer::analyze(project_path);
+    let code_findings = CodeAnalyzer::analyze(project_path);
+    let api_findings = ApiAnalyzer::analyze(project_path, &runtime_events, slow_endpoint_ms);
+    let cache_findings = CacheAnalyzer::analyze(&project_analysis.report, &runtime_events);
+    let sched_findings = SchedulerAnalyzer::analyze(project_path);
 
     let mut findings = Vec::new();
     findings.extend(project_analysis.findings);
     findings.extend(log_findings);
+    findings.extend(code_findings);
     findings.extend(db_analysis.findings);
+    findings.extend(api_findings);
     findings.extend(queue_analysis.findings);
+    findings.extend(cache_findings);
     findings.extend(perf_analysis.findings);
     findings.extend(sec_findings);
+    findings.extend(sched_findings);
     findings.extend(mig_findings);
     findings.extend(dep_findings);
+
+    let git_candidates = GitCorrelator::correlate_recent_changes(project_path, &findings);
+    findings.extend(git_candidates);
 
     let incidents = CorrelationEngine::new().correlate(&CorrelationInput {
         findings: &findings,
@@ -515,6 +553,7 @@ fn emit_response(
         OutputFormat::Json => serde_json::to_string_pretty(resp).unwrap_or_default(),
         OutputFormat::Markdown => render_markdown(resp),
         OutputFormat::Html => render_html(resp),
+        OutputFormat::Csv => render_csv(resp),
         OutputFormat::Text => render_terminal_report(resp, use_color(cli)),
     };
 
@@ -589,5 +628,87 @@ fn run_logs_follow(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
             pos = len;
         }
+    }
+}
+
+fn run_preflight(
+    cli: &Cli,
+    format: OutputFormat,
+    ci: bool,
+) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    let project_path = resolve_project_path(cli)?;
+    match build_full_response(&project_path, None, &LogFilter::default(), 500.0, 1000.0) {
+        Ok(resp) => {
+            let report = resp.project.as_ref().expect("project report present");
+            let preflight = PreflightScanner::evaluate(&project_path, report, &resp.findings);
+
+            if format == OutputFormat::Json {
+                println!("{}", serde_json::to_string_pretty(&preflight)?);
+            } else {
+                println!("DEPLOYMENT PREFLIGHT — {}", preflight.overall);
+                for c in &preflight.checks {
+                    let tag = match c.status {
+                        CheckStatus::Pass => "[PASS]",
+                        CheckStatus::Warn => "[WARN]",
+                        CheckStatus::Fail => "[FAIL]",
+                    };
+                    println!("  {tag} {}: {}", c.name, c.detail);
+                }
+            }
+
+            if ci && preflight.overall == "BLOCKED" {
+                Ok(ExitCode::ThresholdExceeded)
+            } else {
+                Ok(ExitCode::Success)
+            }
+        }
+        Err(err) => Ok(handle_analyzer_error(err, format)),
+    }
+}
+
+fn run_incident(
+    cli: &Cli,
+    format: OutputFormat,
+) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    let project_path = resolve_project_path(cli)?;
+    match build_full_response(&project_path, None, &LogFilter::default(), 500.0, 1000.0) {
+        Ok(resp) => {
+            if format == OutputFormat::Json {
+                emit_response(cli, format, &resp)?;
+                return Ok(ExitCode::Success);
+            }
+
+            let mut timeline: Vec<(String, String)> = Vec::new();
+            for f in &resp.findings {
+                if let Some(ref ts) = f.first_observed {
+                    timeline.push((ts.clone(), format!("[{}] {}", f.id, f.title)));
+                }
+            }
+            timeline.sort_by(|a, b| a.0.cmp(&b.0));
+
+            println!("INCIDENT INVESTIGATION MODE");
+            println!("  Health Score: {}/100 | Incidents: {} | Errors: {}",
+                resp.telemetry.health_score, resp.incidents.len(), resp.summary.errors);
+
+            if !timeline.is_empty() {
+                println!("\nChronological Timeline (Observed Timestamps):");
+                for (ts, desc) in &timeline {
+                    println!("  {ts}  {desc}");
+                }
+            }
+
+            if !resp.incidents.is_empty() {
+                println!("\nCorrelated Incidents:");
+                for inc in &resp.incidents {
+                    println!("  [{}] {} (Confidence: {:?})", inc.id, inc.title, inc.confidence);
+                    println!("    Possible Root Cause: {}", inc.possible_root_cause);
+                    println!("    Next Step: {}", inc.next_step);
+                }
+            } else {
+                println!("\n  No multi-module correlated incidents detected.");
+            }
+            Ok(ExitCode::Success)
+        }
+        Err(err) => Ok(handle_analyzer_error(err, format)),
     }
 }
