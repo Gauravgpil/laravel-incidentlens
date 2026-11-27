@@ -151,11 +151,12 @@ mod tests {
 
         let fake_groq = "gsk_1234567890abcdefghijklmnop";
         let fake_rzp = "rzp_live_1234567890abcd";
+        let fake_resend = "re_1234567890abcdefghijklmnop";
         let fake_dsn = "postgres://admin:supersecretpass@db.internal:5432/prod";
         fs::write(
             tmp.path().join("config/services.php"),
             format!(
-                "<?php\nreturn ['groq' => '{fake_groq}', 'rzp' => '{fake_rzp}', 'dsn' => '{fake_dsn}'];\n"
+                "<?php\nreturn ['groq' => '{fake_groq}', 'rzp' => '{fake_rzp}', 'resend' => '{fake_resend}', 'dsn' => '{fake_dsn}'];\n"
             ),
         )
         .unwrap();
@@ -180,11 +181,13 @@ mod tests {
         let findings = SecurityAnalyzer::analyze(tmp.path(), &report);
         assert!(findings.iter().any(|f| f.title.contains("Groq API Key")));
         assert!(findings.iter().any(|f| f.title.contains("Razorpay Live Key")));
+        assert!(findings.iter().any(|f| f.title.contains("Resend API Key")));
         assert!(findings.iter().any(|f| f.title.contains("Database/Redis DSN")));
 
         let json = serde_json::to_string(&findings).unwrap();
         assert!(!json.contains(fake_groq));
         assert!(!json.contains(fake_rzp));
+        assert!(!json.contains(fake_resend));
         assert!(!json.contains("supersecretpass"));
     }
 }
