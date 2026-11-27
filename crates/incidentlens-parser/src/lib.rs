@@ -9,4 +9,4 @@ pub use log_parser::{
     LogGroup, LogLevel, LogParseResult, LogParseStats, ParserError,
 };
 pub use normalizer::normalize_message;
-pub use runtime_parser::{parse_runtime_jsonl, RuntimeEvent};
+pub use runtime_parser::{parse_runtime_jsonl, stream_runtime_jsonl, RuntimeEvent};

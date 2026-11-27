@@ -5,7 +5,7 @@ use incidentlens_core::redaction::redact_inline_secrets;
 use rayon::prelude::*;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -14,6 +14,8 @@ use thiserror::Error;
 
 const MAX_STACK_FRAMES_PER_ENTRY: usize = 32;
 const MAX_LINE_BYTES: usize = 256 * 1024;
+const MAX_UNIQUE_GROUPS: usize = 50_000;
+const DEFAULT_SAMPLE_ENTRY_LIMIT: usize = 1_000;
 
 #[derive(Debug, Error)]
 pub enum ParserError {
@@ -172,7 +174,9 @@ pub fn parse_log_file(path: &Path, filter: &LogFilter) -> Result<LogParseResult,
         ..Default::default()
     };
 
-    let mut entries = Vec::new();
+    let sample_cap = filter.limit.unwrap_or(DEFAULT_SAMPLE_ENTRY_LIMIT).max(1);
+    let mut entries_ring: VecDeque<LogEntry> = VecDeque::with_capacity(sample_cap.min(4096));
+    let mut groups_map: HashMap<String, LogGroup> = HashMap::new();
     let mut current: Option<LogEntry> = None;
     let mut line_buf = String::new();
     let mut line_no = 0usize;
@@ -202,7 +206,7 @@ pub fn parse_log_file(path: &Path, filter: &LogFilter) -> Result<LogParseResult,
         if line.starts_with('{') {
             if let Some(json_entry) = try_parse_json_line(line, &source_name, line_no) {
                 if let Some(prev) = current.take() {
-                    push_if_matches(prev, filter, &mut entries);
+                    record_entry_bounded(prev, filter, &mut groups_map, &mut entries_ring, sample_cap);
                 }
                 stats.parsed_entries += 1;
                 current = Some(json_entry);
@@ -213,7 +217,7 @@ pub fn parse_log_file(path: &Path, filter: &LogFilter) -> Result<LogParseResult,
         // 2. Try Monolog header line
         if let Some(caps) = monolog_re().captures(line) {
             if let Some(prev) = current.take() {
-                push_if_matches(prev, filter, &mut entries);
+                record_entry_bounded(prev, filter, &mut groups_map, &mut entries_ring, sample_cap);
             }
             let raw_ts = caps.get(1).map(|m| m.as_str().to_string());
             let ts = raw_ts.as_deref().and_then(parse_timestamp);
@@ -267,24 +271,21 @@ pub fn parse_log_file(path: &Path, filter: &LogFilter) -> Result<LogParseResult,
     }
 
     if let Some(prev) = current.take() {
-        push_if_matches(prev, filter, &mut entries);
+        record_entry_bounded(prev, filter, &mut groups_map, &mut entries_ring, sample_cap);
     }
 
-    let groups = group_entries(&entries);
+    let mut groups: Vec<LogGroup> = groups_map.into_values().collect();
+    groups.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| b.level.cmp(&a.level)));
     stats.unique_fingerprints = groups.len();
-
-    if let Some(limit) = filter.limit {
-        entries.truncate(limit);
-    }
 
     Ok(LogParseResult {
         stats,
         groups,
-        entries,
+        entries: entries_ring.into_iter().collect(),
     })
 }
 
-/// Parses multiple log files in parallel using Rayon and merges grouped results.
+/// Parses multiple log files in parallel using Rayon and merges grouped results with bounded memory.
 pub fn parse_log_files_parallel(
     paths: &[PathBuf],
     filter: &LogFilter,
@@ -293,6 +294,7 @@ pub fn parse_log_files_parallel(
         paths.par_iter().map(|p| parse_log_file(p, filter)).collect();
 
     let mut combined_stats = LogParseStats::default();
+    let mut merged_groups: HashMap<String, LogGroup> = HashMap::new();
     let mut all_entries = Vec::new();
 
     for res in per_file {
@@ -302,16 +304,19 @@ pub fn parse_log_files_parallel(
         combined_stats.parsed_entries += part.stats.parsed_entries;
         combined_stats.malformed_lines += part.stats.malformed_lines;
         combined_stats.bytes_processed += part.stats.bytes_processed;
+
+        for g in part.groups {
+            merge_log_group(&mut merged_groups, g);
+        }
         all_entries.extend(part.entries);
     }
 
     all_entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-    let groups = group_entries(&all_entries);
-    combined_stats.unique_fingerprints = groups.len();
+    all_entries.truncate(filter.limit.unwrap_or(DEFAULT_SAMPLE_ENTRY_LIMIT));
 
-    if let Some(limit) = filter.limit {
-        all_entries.truncate(limit);
-    }
+    let mut groups: Vec<LogGroup> = merged_groups.into_values().collect();
+    groups.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| b.level.cmp(&a.level)));
+    combined_stats.unique_fingerprints = groups.len();
 
     Ok(LogParseResult {
         stats: combined_stats,
@@ -320,22 +325,94 @@ pub fn parse_log_files_parallel(
     })
 }
 
-fn push_if_matches(entry: LogEntry, filter: &LogFilter, out: &mut Vec<LogEntry>) {
+fn record_entry_bounded(
+    entry: LogEntry,
+    filter: &LogFilter,
+    groups_map: &mut HashMap<String, LogGroup>,
+    entries_ring: &mut VecDeque<LogEntry>,
+    sample_cap: usize,
+) {
+    if !matches_filter(&entry, filter) {
+        return;
+    }
+
+    let fp = if groups_map.contains_key(&entry.fingerprint) || groups_map.len() < MAX_UNIQUE_GROUPS {
+        entry.fingerprint.clone()
+    } else {
+        "__overflow__".to_string()
+    };
+
+    let grp = groups_map.entry(fp.clone()).or_insert_with(|| LogGroup {
+        fingerprint: fp,
+        level: entry.level,
+        exception_class: entry.exception_class.clone(),
+        normalized_message: normalize_message(&entry.message),
+        sample_message: entry.message.clone(),
+        location: entry.location.clone(),
+        count: 0,
+        first_seen: entry.timestamp,
+        last_seen: entry.timestamp,
+        sample_stack: entry.stack_trace.clone(),
+    });
+    grp.count += 1;
+    if entry.level > grp.level {
+        grp.level = entry.level;
+    }
+    if let Some(ts) = entry.timestamp {
+        grp.first_seen = Some(match grp.first_seen {
+            Some(prev) => prev.min(ts),
+            None => ts,
+        });
+        grp.last_seen = Some(match grp.last_seen {
+            Some(prev) => prev.max(ts),
+            None => ts,
+        });
+    }
+
+    if entries_ring.len() >= sample_cap {
+        entries_ring.pop_front();
+    }
+    entries_ring.push_back(entry);
+}
+
+fn merge_log_group(map: &mut HashMap<String, LogGroup>, g: LogGroup) {
+    let key = if map.contains_key(&g.fingerprint) || map.len() < MAX_UNIQUE_GROUPS {
+        g.fingerprint.clone()
+    } else {
+        "__overflow__".to_string()
+    };
+    if let Some(existing) = map.get_mut(&key) {
+        existing.count += g.count;
+        if g.level > existing.level {
+            existing.level = g.level;
+        }
+        if let Some(ts) = g.first_seen {
+            existing.first_seen = Some(existing.first_seen.map(|p| p.min(ts)).unwrap_or(ts));
+        }
+        if let Some(ts) = g.last_seen {
+            existing.last_seen = Some(existing.last_seen.map(|p| p.max(ts)).unwrap_or(ts));
+        }
+    } else {
+        map.insert(key, g);
+    }
+}
+
+fn matches_filter(entry: &LogEntry, filter: &LogFilter) -> bool {
     if let Some(min_lvl) = filter.min_level {
         if entry.level < min_lvl {
-            return;
+            return false;
         }
     }
     if let Some(since) = filter.since {
         if let Some(ts) = entry.timestamp {
             if ts < since {
-                return;
+                return false;
             }
         }
     }
     if let Some(ref fp) = filter.fingerprint {
         if &entry.fingerprint != fp {
-            return;
+            return false;
         }
     }
     if let Some(ref needle) = filter.search {
@@ -347,46 +424,10 @@ fn push_if_matches(entry: LogEntry, filter: &LogFilter, out: &mut Vec<LogEntry>)
             .map(|c| c.to_ascii_lowercase().contains(&needle_lower))
             .unwrap_or(false);
         if !in_msg && !in_exc {
-            return;
+            return false;
         }
     }
-    out.push(entry);
-}
-
-fn group_entries(entries: &[LogEntry]) -> Vec<LogGroup> {
-    let mut map: HashMap<String, LogGroup> = HashMap::new();
-    for e in entries {
-        let grp = map.entry(e.fingerprint.clone()).or_insert_with(|| LogGroup {
-            fingerprint: e.fingerprint.clone(),
-            level: e.level,
-            exception_class: e.exception_class.clone(),
-            normalized_message: normalize_message(&e.message),
-            sample_message: e.message.clone(),
-            location: e.location.clone(),
-            count: 0,
-            first_seen: e.timestamp,
-            last_seen: e.timestamp,
-            sample_stack: e.stack_trace.clone(),
-        });
-        grp.count += 1;
-        if e.level > grp.level {
-            grp.level = e.level;
-        }
-        if let Some(ts) = e.timestamp {
-            grp.first_seen = Some(match grp.first_seen {
-                Some(prev) => prev.min(ts),
-                None => ts,
-            });
-            grp.last_seen = Some(match grp.last_seen {
-                Some(prev) => prev.max(ts),
-                None => ts,
-            });
-        }
-    }
-
-    let mut groups: Vec<LogGroup> = map.into_values().collect();
-    groups.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| b.level.cmp(&a.level)));
-    groups
+    true
 }
 
 #[derive(Deserialize)]
@@ -476,5 +517,26 @@ mod tests {
         assert_eq!(res.stats.parsed_entries, 3);
         assert_eq!(res.groups.len(), 2);
         assert_eq!(res.groups[0].count, 2);
+    }
+
+    #[test]
+    fn bounds_sample_entries_while_aggregating_all_groups() {
+        let mut f = NamedTempFile::new().unwrap();
+        for i in 0..200 {
+            writeln!(
+                f,
+                "[2026-11-27 10:00:00] production.ERROR: Deadlock for order {i} at app/Order.php:10"
+            )
+            .unwrap();
+        }
+        let filter = LogFilter {
+            limit: Some(5),
+            ..Default::default()
+        };
+        let res = parse_log_file(f.path(), &filter).unwrap();
+        assert_eq!(res.stats.parsed_entries, 200);
+        assert_eq!(res.entries.len(), 5);
+        assert_eq!(res.groups.len(), 1);
+        assert_eq!(res.groups[0].count, 200);
     }
 }

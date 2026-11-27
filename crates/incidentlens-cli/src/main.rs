@@ -293,7 +293,8 @@ fn build_full_response(
         .join("runtime.jsonl");
     let runtime_events = parse_runtime_jsonl(&runtime_jsonl);
 
-    let db_analysis = DatabaseAnalyzer::analyze(&runtime_events, &log_res.groups, slow_query_ms);
+    let mut db_analysis = DatabaseAnalyzer::analyze(&runtime_events, &log_res.groups, slow_query_ms);
+    db_analysis.findings.extend(DatabaseAnalyzer::analyze_static(project_path));
     let queue_analysis = QueueAnalyzer::analyze(&runtime_events, &log_res.groups);
     let perf_analysis = PerformanceAnalyzer::analyze(&runtime_events, slow_endpoint_ms);
     let sec_findings = SecurityAnalyzer::analyze(project_path, &project_analysis.report);
@@ -305,7 +306,7 @@ fn build_full_response(
     let sched_findings = SchedulerAnalyzer::analyze(project_path);
     let arch_findings = ArchitectureAnalyzer::analyze(project_path);
     let fw_findings = FrameworkAnalyzer::analyze(project_path);
-    let res_findings = ResourceAnalyzer::analyze(project_path);
+    let res_findings = ResourceAnalyzer::analyze_with_runtime(project_path, &runtime_events);
     let test_findings = TestingAnalyzer::analyze(project_path, None);
 
     let mut findings = Vec::new();

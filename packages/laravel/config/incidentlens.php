@@ -20,6 +20,7 @@ return [
         'enabled' => true,
         'capture_queries' => false,
         'capture_bindings' => false,
+        'detect_lazy_loading' => false,
         'slow_query_threshold_ms' => 500,
     ],
 

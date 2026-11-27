@@ -46,6 +46,8 @@ final class IncidentLensServiceProvider extends ServiceProvider
                 (float) $config->get('incidentlens.performance.sampling_rate', 1.0),
                 (bool) $config->get('incidentlens.database.capture_queries', false),
                 (bool) $config->get('incidentlens.queue.enabled', true),
+                (bool) $config->get('incidentlens.database.detect_lazy_loading', false),
+                $this->app->basePath(),
             );
             $collector->register($this->app->make(Dispatcher::class));
         }

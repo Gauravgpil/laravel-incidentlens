@@ -96,4 +96,20 @@ final class IncidentLensPackageTest extends TestCase
         $this->assertStringNotContainsString('secret@example.com', $sql);
         $this->assertStringNotContainsString('42', $sql);
     }
+
+    public function test_runtime_collector_buffers_and_flushes_jsonl_safely(): void
+    {
+        $tmpDir = sys_get_temp_dir() . '/incidentlens_test_' . bin2hex(random_bytes(4));
+        $collector = new \Gaurav\IncidentLens\Collectors\RuntimeCollector($tmpDir, 1.0, false, true, false);
+        $collector->appendEvent(['type' => 'cache', 'timestamp' => gmdate('c'), 'hit' => true, 'store' => 'redis']);
+        $collector->resetRequestState();
+
+        $jsonl = $tmpDir . '/runtime.jsonl';
+        $this->assertFileExists($jsonl);
+        $content = (string) file_get_contents($jsonl);
+        $this->assertStringContainsString('"type":"cache"', $content);
+
+        @unlink($jsonl);
+        @rmdir($tmpDir);
+    }
 }

@@ -187,6 +187,7 @@ mod tests {
                 sql_normalized: "select * from order_items where order_id = ?".into(),
                 connection: Some("mysql".into()),
                 request_id: Some("req_99".into()),
+                location: None,
             });
         }
 

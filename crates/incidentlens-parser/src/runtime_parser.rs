@@ -12,6 +12,16 @@ pub enum RuntimeEvent {
         sql_normalized: String,
         connection: Option<String>,
         request_id: Option<String>,
+        #[serde(default)]
+        location: Option<String>,
+    },
+    LazyLoading {
+        timestamp: String,
+        model: String,
+        relation: String,
+        #[serde(default)]
+        location: Option<String>,
+        request_id: Option<String>,
     },
     Request {
         timestamp: String,
@@ -46,23 +56,38 @@ pub enum RuntimeEvent {
     },
 }
 
-/// Streams a bounded runtime `.jsonl` file, skipping malformed lines gracefully.
-pub fn parse_runtime_jsonl(path: &Path) -> Vec<RuntimeEvent> {
+/// Streams a bounded runtime `.jsonl` file in a single pass with O(1) event memory.
+pub fn stream_runtime_jsonl<F>(path: &Path, mut visitor: F)
+where
+    F: FnMut(RuntimeEvent),
+{
     let Ok(file) = File::open(path) else {
-        return Vec::new();
+        return;
     };
-    let reader = BufReader::with_capacity(32 * 1024, file);
-    let mut events = Vec::new();
+    let mut reader = BufReader::with_capacity(32 * 1024, file);
+    let mut line = String::new();
 
-    for line in reader.lines().map_while(Result::ok) {
+    loop {
+        line.clear();
+        let Ok(n) = reader.read_line(&mut line) else {
+            break;
+        };
+        if n == 0 {
+            break;
+        }
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
         if let Ok(ev) = serde_json::from_str::<RuntimeEvent>(trimmed) {
-            events.push(ev);
+            visitor(ev);
         }
     }
+}
 
+/// Convenience helper returning parsed events (used by tests and small datasets).
+pub fn parse_runtime_jsonl(path: &Path) -> Vec<RuntimeEvent> {
+    let mut events = Vec::new();
+    stream_runtime_jsonl(path, |ev| events.push(ev));
     events
 }
