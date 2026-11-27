@@ -12,18 +12,54 @@ static INERTIA_SECRET_PROP_RE: OnceLock<Regex> = OnceLock::new();
 fn secret_patterns() -> &'static Vec<(&'static str, Regex)> {
     SECRET_PATTERNS.get_or_init(|| {
         vec![
-            ("OpenAI API Key", Regex::new(r"\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}\b").unwrap()),
+            // --- AI Providers (A-Z) ---
             ("Anthropic API Key", Regex::new(r"\bsk-ant-[A-Za-z0-9_-]{20,}\b").unwrap()),
-            ("OpenRouter API Key", Regex::new(r"\bsk-or-v1-[A-Za-z0-9]{20,}\b").unwrap()),
+            ("ElevenLabs API Key", Regex::new(r#"(?i)(?:ELEVENLABS_API_KEY\s*[:=]\s*['"][^'"]{16,}['"]|\bsk_[a-f0-9]{48}\b)"#).unwrap()),
             ("Google Gemini / GCP API Key", Regex::new(r"\bAIza[0-9A-Za-z\-_]{35}\b").unwrap()),
+            ("Groq API Key", Regex::new(r"\bgsk_[A-Za-z0-9]{20,}\b").unwrap()),
             ("Hugging Face Token", Regex::new(r"\bhf_[A-Za-z0-9]{20,}\b").unwrap()),
+            ("OpenAI API Key", Regex::new(r"\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}\b").unwrap()),
+            ("OpenRouter API Key", Regex::new(r"\bsk-or-v1-[A-Za-z0-9]{20,}\b").unwrap()),
+            ("Perplexity API Key", Regex::new(r"\bpplx-[A-Za-z0-9]{20,}\b").unwrap()),
             ("Replicate API Token", Regex::new(r"\br8_[A-Za-z0-9]{20,}\b").unwrap()),
+            ("xAI / Grok API Key", Regex::new(r"\bxai-[A-Za-z0-9]{20,}\b").unwrap()),
+            ("AI Provider API Key Assignment", Regex::new(r#"(?i)(?:WAVESPEED|KIE|RUNPOD|STABILITY|DEEPGRAM|COHERE|MISTRAL|DEEPSEEK|TOGETHER|FIREWORKS|FAL)_(?:API_)?KEY\s*(?:=>|=|:)\s*['"][^'"]{12,}['"]"#).unwrap()),
+
+            // --- Payment Gateways & Marketing ---
+            ("Cashfree / PayPal / GetResponse Secret", Regex::new(r#"(?i)(?:CASHFREE_SECRET|PAYPAL_SECRET|GETRESPONSE_API_KEY)\s*(?:=>|=|:)\s*['"][^'"]{12,}['"]"#).unwrap()),
+            ("Razorpay Live Key", Regex::new(r"\brzp_live_[A-Za-z0-9]{14,}\b").unwrap()),
+            ("Square Access/OAuth Token", Regex::new(r"\bsq0(?:atp|csp)-[A-Za-z0-9\-_]{20,}\b").unwrap()),
             ("Stripe Secret Key", Regex::new(r"\b[sr]k_live_[0-9a-zA-Z]{16,}\b").unwrap()),
-            ("AWS Access Key ID", Regex::new(r"\bAKIA[0-9A-Z]{16}\b").unwrap()),
+            ("Stripe Webhook Signing Secret", Regex::new(r"\bwhsec_[A-Za-z0-9]{20,}\b").unwrap()),
+
+            // --- Cloud, Infrastructure & Auth ---
+            ("Alibaba Cloud Access Key", Regex::new(r"\bLTAI[A-Za-z0-9]{16,}\b").unwrap()),
+            ("AWS Access Key ID", Regex::new(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b").unwrap()),
+            ("Cloudflare / Vercel API Token", Regex::new(r#"(?i)(?:CLOUDFLARE_API_TOKEN|VERCEL_TOKEN)\s*(?:=>|=|:)\s*['"][^'"]{16,}['"]"#).unwrap()),
+            ("DigitalOcean Token", Regex::new(r"\bdo[po]_v1_[a-f0-9]{64}\b").unwrap()),
+            ("GCP Service Account JSON", Regex::new(r#""type"\s*:\s*"service_account""#).unwrap()),
+            ("JWT / Supabase Token", Regex::new(r"\beyJhbGciOi[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b").unwrap()),
+            ("Laravel APP_KEY Hardcoded", Regex::new(r"\bbase64:[A-Za-z0-9+/=]{32,}\b").unwrap()),
+            ("npm Access Token", Regex::new(r"\bnpm_[A-Za-z0-9]{36}\b").unwrap()),
+            ("PyPI API Token", Regex::new(r"\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9\-_]{20,}\b").unwrap()),
+
+            // --- VCS, Messaging, Email, Monitoring ---
+            ("Discord Bot Token", Regex::new(r"\b[MN][A-Za-z0-9]{23}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27}\b").unwrap()),
             ("GitHub Personal Access Token", Regex::new(r"\b(?:ghp|gho|ghu|ghs)_[A-Za-z0-9]{30,}\b|\bgithub_pat_[A-Za-z0-9_]{30,}\b").unwrap()),
             ("GitLab Token", Regex::new(r"\bglpat-[A-Za-z0-9\-_]{20,}\b").unwrap()),
+            ("Mailgun API Key", Regex::new(r"\bkey-[0-9a-f]{32}\b").unwrap()),
+            ("SendGrid API Key", Regex::new(r"\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b").unwrap()),
+            ("Sentry DSN with Secret", Regex::new(r"https://[0-9a-f]{32}@[a-z0-9.-]*sentry\.io/\d+").unwrap()),
+            ("Shopify Token/Secret", Regex::new(r"\bshp(?:at|ss|pa|ca)_[a-fA-F0-9]{32}\b").unwrap()),
             ("Slack Bot/User Token", Regex::new(r"\bxox[baprs]-[0-9A-Za-z-]{10,}\b").unwrap()),
-            ("Private Key Block", Regex::new(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----").unwrap()),
+            ("Slack Incoming Webhook URL", Regex::new(r"https://hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]+").unwrap()),
+            ("Telegram Bot Token", Regex::new(r"\b\d{8,10}:AA[A-Za-z0-9_-]{33}\b").unwrap()),
+            ("Twilio API Key / Account SID", Regex::new(r"\b(?:SK|AC)[0-9a-f]{32}\b").unwrap()),
+
+            // --- Database DSNs, Private Keys & Hardcoded Secrets ---
+            ("Database/Redis DSN with Credentials", Regex::new(r#"(?:mysql|postgres|postgresql|mongodb(?:\+srv)?|redis|rediss|amqp)://[^:\s/'"]+:[^@\s/'"]+@[^\s/'"]+"#).unwrap()),
+            ("Private Key Block", Regex::new(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----").unwrap()),
+            ("Hardcoded Password/Secret Assignment", Regex::new(r#"(?i)(?:db_password|redis_password|jwt_secret|webhook_secret|oauth_client_secret|smtp_password)\s*(?:=>|=|:)\s*['"][^'"]{8,}['"]"#).unwrap()),
         ]
     })
 }

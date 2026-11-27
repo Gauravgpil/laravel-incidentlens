@@ -143,4 +143,48 @@ mod tests {
         assert!(!json.contains(fake_openai));
         assert!(json.contains("sk-p****...mnop"));
     }
+
+    #[test]
+    fn detects_extended_a_to_z_secrets_with_masking() {
+        let tmp = TempDir::new().unwrap();
+        fs::create_dir_all(tmp.path().join("config")).unwrap();
+
+        let fake_groq = "gsk_1234567890abcdefghijklmnop";
+        let fake_rzp = "rzp_live_1234567890abcd";
+        let fake_dsn = "postgres://admin:supersecretpass@db.internal:5432/prod";
+        fs::write(
+            tmp.path().join("config/services.php"),
+            format!(
+                "<?php\nreturn ['groq' => '{fake_groq}', 'rzp' => '{fake_rzp}', 'dsn' => '{fake_dsn}'];\n"
+            ),
+        )
+        .unwrap();
+
+        let report = ProjectReport {
+            root: tmp.path().display().to_string(),
+            name: "test".into(),
+            is_laravel_project: true,
+            laravel_version: None,
+            php_constraint: None,
+            php_version: None,
+            environment: Some("production".into()),
+            debug: Some(false),
+            has_env_file: false,
+            has_composer_lock: true,
+            has_artisan: true,
+            log_files_count: 0,
+            packages_count: 1,
+            drivers: ProjectDrivers::default(),
+        };
+
+        let findings = SecurityAnalyzer::analyze(tmp.path(), &report);
+        assert!(findings.iter().any(|f| f.title.contains("Groq API Key")));
+        assert!(findings.iter().any(|f| f.title.contains("Razorpay Live Key")));
+        assert!(findings.iter().any(|f| f.title.contains("Database/Redis DSN")));
+
+        let json = serde_json::to_string(&findings).unwrap();
+        assert!(!json.contains(fake_groq));
+        assert!(!json.contains(fake_rzp));
+        assert!(!json.contains("supersecretpass"));
+    }
 }
