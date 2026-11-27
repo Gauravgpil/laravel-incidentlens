@@ -8,6 +8,7 @@ use Gaurav\IncidentLens\Engine\EngineClient;
 use Gaurav\IncidentLens\Engine\EngineException;
 use Illuminate\Console\Command;
 use Symfony\Component\Process\ExecutableFinder;
+use Symfony\Component\Process\Process;
 use function Laravel\Prompts\confirm;
 use function Laravel\Prompts\search;
 use function Laravel\Prompts\select;
@@ -24,10 +25,13 @@ final class IncidentLensCommand extends Command
             return $this->launchRustTui($engine);
         }
 
-        $agyBinary = $this->detectAgyBinary();
-        $agyStatus = $agyBinary !== null
-            ? '<fg=green>connected</>'
-            : '<fg=gray>not detected</>';
+        $agy = $this->detectAgyStatus();
+        $agyBinary = $agy['binary'];
+        $agyStatus = match ($agy['state']) {
+            'connected' => "<fg=green>connected (v{$agy['version']})</>",
+            'installed' => "<fg=yellow>installed (v{$agy['version']}, sign in with `agy`)</>",
+            default     => '<fg=gray>not installed</>',
+        };
 
         $this->newLine();
         $this->line("  <fg=cyan;options=bold>LARAVEL INCIDENTLENS</>  <fg=gray>v0.1.0</>  |  <fg=gray>Antigravity CLI (agy):</> {$agyStatus}");
@@ -148,8 +152,21 @@ final class IncidentLensCommand extends Command
             return self::FAILURE;
         }
 
+        $scopeChoice = function_exists('Laravel\\Prompts\\select')
+            ? select(
+                label: 'Which findings should be included for Antigravity CLI?',
+                options: [
+                    'all'      => 'All Diagnostic Findings (Full Report)',
+                    'security' => 'Security Findings Only',
+                    'database' => 'Database & N+1 Findings Only',
+                ],
+                default: 'security',
+            )
+            : 'all';
+
         $reportFile = 'incidentlens-report.md';
-        $code = $this->runRustSubcommand($engine, ['report', '--format=markdown', '--output=' . $reportFile]);
+        $subcommand = $scopeChoice === 'all' ? 'report' : $scopeChoice;
+        $code = $this->runRustSubcommand($engine, [$subcommand, '--format=markdown', '--output=' . $reportFile]);
         if ($code !== self::SUCCESS) {
             return $code;
         }
@@ -167,27 +184,51 @@ final class IncidentLensCommand extends Command
             return self::SUCCESS;
         }
 
-        $prompt = "Review the Laravel IncidentLens diagnostic report in {$reportFile}. Prioritize high/critical security and N+1 findings, explain each fix, and apply safe fixes.";
+        $prompt = "Review the Laravel IncidentLens diagnostic report in {$reportFile}. Prioritize high/critical findings, explain each fix, and apply safe fixes.";
         return $this->runExternalTty([$agyBinary, '-i', $prompt]);
     }
 
-    private function detectAgyBinary(): ?string
+    /**
+     * Checks whether `agy` is installed, executable (--version), and initialized/signed in.
+     *
+     * @return array{state: string, binary: ?string, version: ?string}
+     */
+    private function detectAgyStatus(): array
     {
         $finder = new ExecutableFinder();
-        $found = $finder->find('agy');
-        if ($found !== null) {
-            return $found;
-        }
+        $binary = $finder->find('agy');
 
         $home = getenv('HOME') ?: '';
-        if ($home !== '') {
+        if ($binary === null && $home !== '') {
             $local = $home . DIRECTORY_SEPARATOR . '.local' . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'agy';
             if (is_file($local) && is_executable($local)) {
-                return $local;
+                $binary = $local;
             }
         }
 
-        return null;
+        if ($binary === null) {
+            return ['state' => 'not_installed', 'binary' => null, 'version' => null];
+        }
+
+        $proc = new Process([$binary, '--version']);
+        $proc->setTimeout(2);
+        $proc->run();
+
+        if (! $proc->isSuccessful()) {
+            return ['state' => 'not_installed', 'binary' => null, 'version' => null];
+        }
+
+        $version = trim($proc->getOutput()) ?: 'unknown';
+        $hasConfig = $home !== '' && (
+            is_dir($home . DIRECTORY_SEPARATOR . '.gemini' . DIRECTORY_SEPARATOR . 'antigravity-cli')
+            || is_dir($home . DIRECTORY_SEPARATOR . '.gemini' . DIRECTORY_SEPARATOR . 'antigravity')
+        );
+
+        return [
+            'state' => $hasConfig ? 'connected' : 'installed',
+            'binary' => $binary,
+            'version' => $version,
+        ];
     }
 
     private function launchRustTui(EngineClient $engine): int
