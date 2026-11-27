@@ -5,17 +5,33 @@ declare(strict_types=1);
 
 $projectRoot = getcwd() ?: dirname(__DIR__, 4);
 $binName = DIRECTORY_SEPARATOR === '\\' ? 'incidentlens.exe' : 'incidentlens';
+$selfReal = realpath(__FILE__) ?: __FILE__;
+
+$isNativeBinary = static function (string $path) use ($selfReal): bool {
+    $real = realpath($path);
+    if ($real === false || $real === $selfReal || ! is_file($real)) {
+        return false;
+    }
+    if (DIRECTORY_SEPARATOR !== '\\' && ! is_executable($real)) {
+        return false;
+    }
+    $head = @file_get_contents($real, false, null, 0, 64);
+    if (is_string($head) && (str_contains($head, '<?php') || str_contains($head, 'env php'))) {
+        return false;
+    }
+    return true;
+};
 
 $candidates = array_filter([
     getenv('INCIDENTLENS_BINARY') ?: null,
     $projectRoot . DIRECTORY_SEPARATOR . 'target' . DIRECTORY_SEPARATOR . 'release' . DIRECTORY_SEPARATOR . $binName,
     $projectRoot . DIRECTORY_SEPARATOR . 'target' . DIRECTORY_SEPARATOR . 'debug' . DIRECTORY_SEPARATOR . $binName,
-    __DIR__ . DIRECTORY_SEPARATOR . $binName,
+    __DIR__ . DIRECTORY_SEPARATOR . 'incidentlens-engine' . (DIRECTORY_SEPARATOR === '\\' ? '.exe' : ''),
 ]);
 
 $binary = null;
 foreach ($candidates as $candidate) {
-    if (is_file($candidate) && (DIRECTORY_SEPARATOR === '\\' || is_executable($candidate))) {
+    if ($isNativeBinary($candidate)) {
         $binary = $candidate;
         break;
     }
@@ -25,7 +41,7 @@ if ($binary === null) {
     $pathEnv = getenv('PATH') ?: '';
     foreach (explode(PATH_SEPARATOR, $pathEnv) as $dir) {
         $p = rtrim($dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $binName;
-        if (is_file($p) && (DIRECTORY_SEPARATOR === '\\' || is_executable($p))) {
+        if ($isNativeBinary($p)) {
             $binary = $p;
             break;
         }
@@ -33,7 +49,7 @@ if ($binary === null) {
 }
 
 if ($binary === null) {
-    fwrite(STDERR, "error: IncidentLens Rust binary not found. Run `php artisan incidentlens:install` or set INCIDENTLENS_BINARY.\n");
+    fwrite(STDERR, "error: IncidentLens native Rust binary not found. Set INCIDENTLENS_BINARY or place the compiled Rust binary in /usr/local/bin/incidentlens.\n");
     exit(3);
 }
 

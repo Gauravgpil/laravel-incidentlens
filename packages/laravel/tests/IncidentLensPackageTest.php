@@ -42,6 +42,16 @@ final class IncidentLensPackageTest extends TestCase
         $client->resolveBinary();
     }
 
+    public function test_engine_client_never_selects_php_shim_as_rust_binary(): void
+    {
+        $shim = dirname(__DIR__) . '/bin/incidentlens';
+        $client = new EngineClient($shim, 10, $this->app->basePath());
+
+        $this->expectException(EngineException::class);
+        $this->expectExceptionMessage('IncidentLens Rust engine binary not found');
+        $client->resolveBinary();
+    }
+
     public function test_artisan_commands_are_registered(): void
     {
         $commands = array_keys($this->app->make('Illuminate\Contracts\Console\Kernel')->all());

@@ -26,14 +26,21 @@ final class EngineClient
     {
         $candidates = [];
 
-        if ($this->configuredBinary !== null && $this->configuredBinary !== '') {
-            $candidates[] = $this->configuredBinary;
-            if ($this->isExecutableFile($this->configuredBinary)) {
-                return $this->configuredBinary;
+        $envBinary = $this->configuredBinary ?? (getenv('INCIDENTLENS_BINARY') ?: null);
+        if ($envBinary !== null && $envBinary !== '') {
+            $candidates[] = $envBinary;
+            if ($this->isExecutableFile($envBinary)) {
+                return $envBinary;
             }
         }
 
         if ($this->projectBasePath !== null) {
+            $vendorEngine = $this->projectBasePath . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . 'incidentlens-engine' . (DIRECTORY_SEPARATOR === '\\' ? '.exe' : '');
+            $candidates[] = $vendorEngine;
+            if ($this->isExecutableFile($vendorEngine)) {
+                return $vendorEngine;
+            }
+
             $vendorBin = $this->projectBasePath . DIRECTORY_SEPARATOR . 'vendor' . DIRECTORY_SEPARATOR . 'bin' . DIRECTORY_SEPARATOR . $this->binaryName();
             $candidates[] = $vendorBin;
             if ($this->isExecutableFile($vendorBin)) {
@@ -43,7 +50,7 @@ final class EngineClient
 
         $finder = new ExecutableFinder();
         $found = $finder->find($this->binaryName());
-        if ($found !== null) {
+        if ($found !== null && $this->isExecutableFile($found)) {
             return $found;
         }
         $candidates[] = 'PATH:' . $this->binaryName();
@@ -152,6 +159,18 @@ final class EngineClient
 
     private function isExecutableFile(string $path): bool
     {
-        return is_file($path) && (DIRECTORY_SEPARATOR === '\\' || is_executable($path));
+        $real = realpath($path);
+        if ($real === false || ! is_file($real)) {
+            return false;
+        }
+        if (DIRECTORY_SEPARATOR !== '\\' && ! is_executable($real)) {
+            return false;
+        }
+        // Never treat the Composer PHP shim itself as the native Rust engine binary.
+        $head = @file_get_contents($real, false, null, 0, 64);
+        if (is_string($head) && (str_contains($head, '<?php') || str_contains($head, 'env php'))) {
+            return false;
+        }
+        return true;
     }
 }
